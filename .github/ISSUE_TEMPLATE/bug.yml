@@ -14,13 +14,13 @@ body:
     id: env
     attributes:
       label: Environment
-      description: OS, Python version, Claude Code version, claude-theater version (`claude-theater --version`).
-      placeholder: "Windows 11, Python 3.12, Claude Code 2.1.x, claude-theater 0.1.0"
+      description: OS, Cursor version, and whether you're using the extension or the Python server.
+      placeholder: "macOS 15, Cursor 1.x, extension 0.1.0"
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Console output (optional)
-      description: Anything Claude Theater printed to the terminal. Redact any paths/content you'd rather not share.
+      description: Anything Cursor Theater printed (terminal or the extension's Output channel). Redact any paths/content you'd rather not share.
       render: text

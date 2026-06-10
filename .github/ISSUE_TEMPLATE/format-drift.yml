@@ -1,34 +1,34 @@
-name: Format-drift report
-description: A Claude Code version renders oddly or trips the version banner
-title: "[drift] "
-labels: ["format-drift"]
+name: Rendering / data report
+description: A conversation renders oddly (wrong title, status, timer, or a missing project room)
+title: "[render] "
+labels: ["rendering"]
 body:
   - type: markdown
     attributes:
       value: |
-        A scrubbed journal sample from a new Claude Code version is the single
-        most valuable contribution. **Never paste unscrubbed journal content** —
-        these files contain real conversation text. Replace every task/result
-        with placeholder text and keep only the structure.
+        Cursor Theater reads transcripts under `~/.cursor/projects` and chat
+        metadata from `state.vscdb`. If something renders wrong, a **scrubbed**
+        sample helps a lot. **Never paste unscrubbed transcript content** — these
+        files contain real conversation text. Replace every prompt/result with
+        placeholder text and keep only the structure.
   - type: input
-    id: cc-version
+    id: cursor-version
     attributes:
-      label: Claude Code version
-      description: Output of `claude --version`.
-      placeholder: "2.2.0"
+      label: Cursor version & OS
+      placeholder: "Cursor 1.x, macOS 15"
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
       label: What looked wrong?
-      description: The banner text, a mislabeled or empty agent, a missing room, wrong status…
+      description: A mislabeled or empty conversation, a missing project room, wrong status or timer…
     validations:
       required: true
   - type: textarea
     id: sample
     attributes:
-      label: Scrubbed agent-*.jsonl sample
+      label: Scrubbed transcript sample (optional)
       description: A few representative lines, with all real prompt/result text replaced.
       render: json
   - type: checkboxes
@@ -36,5 +36,5 @@ body:
     attributes:
       label: Privacy
       options:
-        - label: I removed all real prompt/result content from the sample above.
+        - label: I removed all real prompt/result content from any sample above.
           required: true

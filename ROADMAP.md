@@ -2,37 +2,33 @@
 
 Directional, not a promise. Issues and PRs welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md). The guiding constraints don't change:
-**local-only, zero runtime dependencies, single-file stdlib, degrade-not-crash.**
+**local-only, read-only, no telemetry.**
 
 ## Now — 0.1.x
 
-- Single-file, pure-stdlib web app; one room per conversation.
-- Isolated parser with degrade-not-crash and a version banner.
-- Bilingual UI (English / Hebrew), instant toggle, RTL-aware.
-- `--demo` office for screenshots and a zero-setup first run.
-- PyPI / pipx packaging; CI across Windows/macOS/Linux × Python 3.9–3.13.
-- **VS Code extension**: the office in an interactive `WebviewPanel`, with
-  background auto-start and a status-bar toggle (shipped as a `.vsix` on Releases).
+- Native, server-less Cursor extension: editor tab, dockable side-bar view, and a
+  status-bar item with a live working-agent count.
+- Conversations grouped per Cursor instance / project, with real chat titles and
+  status from `state.vscdb`.
+- Shared single-source UI (`ui/theater.html`) for both the extension and the
+  standalone Python server; bilingual EN/HE with RTL.
 
 ## Next
 
-- **Claude Code version adapters** as the format evolves — driven by
-  community format-drift reports (the #1 contribution).
-- **Open VSX** mirror of the VS Code extension (for VSCodium / Cursor), and the
-  VS Code Marketplace.
-- **npx** entry point for the Node-native crowd.
-- **More languages** — each is a single edit to the `I18N` table.
-- Labels for **tools** beyond the current set (broader MCP coverage).
+- **Open VSX / Marketplace** publishing of the extension.
+- Resilience to Cursor's transcript / `state.vscdb` format changes as they evolve.
+- More languages — each is a single edit to the `I18N` table in `ui/theater.html`.
+- Broader tool labels / coverage.
 
-## Ideas (v2, unscheduled)
+## Ideas (unscheduled)
 
-- Native finish notifications (e.g. Windows toast via an optional, lazy import).
+- Native finish notifications.
 - Themes / skins.
-- Per-agent timing stats (durations, tool histograms).
+- Per-conversation timing stats (durations, tool histograms).
 
 ## Non-goals
 
-- No telemetry, no network calls, nothing that leaves `127.0.0.1`.
-- No required runtime dependencies.
-- No control over agents — Claude Theater only *watches* the journals Claude
-  Code already writes.
+- No telemetry, no network calls; the extension opens no port and the Python
+  server stays on `127.0.0.1`.
+- No control over agents — Cursor Theater only *watches* the journals Cursor
+  already writes.

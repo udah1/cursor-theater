@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import pathname2url
 
-__version__ = "0.1.1"
+__version__ = "0.1.0"
 
 def _default_port():
     """Port from $CURSOR_THEATER_PORT, else 7333. The --port flag overrides this."""

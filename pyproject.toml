@@ -4,15 +4,15 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "claude-theater"
+name = "cursor-theater"
 dynamic = ["version"]
-description = "Watch your Claude Code subagents work — a live office for every conversation."
+description = "Watch your Cursor agent conversations work — a live office for every project."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Asaf Abramzon", email = "asafabram@gmail.com" }]
-keywords = ["claude", "claude-code", "subagents", "agents", "visualizer", "dashboard", "dev-tools"]
+authors = [{ name = "udah1" }]
+keywords = ["cursor", "cursor-ai", "agents", "visualizer", "dashboard", "dev-tools"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -32,23 +32,23 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/asafabram-ship-it/claude-theater"
-Issues = "https://github.com/asafabram-ship-it/claude-theater/issues"
+Homepage = "https://github.com/udah1/cursor-theater"
+Issues = "https://github.com/udah1/cursor-theater/issues"
 
 [project.scripts]
-claude-theater = "claude_theater:main"
+cursor-theater = "cursor_theater:main"
 
-# Version is the single source of truth in claude_theater.py (__version__).
+# Version is the single source of truth in cursor_theater.py (__version__).
 [tool.hatch.version]
-path = "claude_theater.py"
+path = "cursor_theater.py"
 
 # Single top-level module — ship exactly that one file in the wheel.
 [tool.hatch.build.targets.wheel]
-include = ["claude_theater.py"]
+include = ["cursor_theater.py"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "claude_theater.py",
+    "cursor_theater.py",
     "start.cmd",
     "README.md",
     "LICENSE",
@@ -56,8 +56,6 @@ include = [
     "CONTRIBUTING.md",
     "ROADMAP.md",
     "docs/",
-    "tests/",
-    "fixtures/",
 ]
 
 [tool.ruff]

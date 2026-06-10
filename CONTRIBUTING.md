@@ -1,55 +1,60 @@
-# Contributing to Claude Theater
+# Contributing to Cursor Theater
 
-Thanks for helping! The single most valuable contribution is a **journal sample
-from a Claude Code version we haven't tested** — that's what keeps the parser
-honest as the format evolves.
+Thanks for helping! Cursor Theater reads the transcripts Cursor writes under
+`~/.cursor/projects` and the chat metadata in Cursor's global `state.vscdb`. As
+those formats evolve, the most valuable contribution is a **report (with a
+scrubbed sample) when something renders oddly**.
 
-## #1 contribution: a format-drift report
+## Reporting a rendering / format issue
 
-If you see the yellow banner ("Tested up to Claude Code X · detected Y") or an
-agent renders oddly, please:
+If a conversation shows the wrong title, status, or timer — or a project room is
+missing:
 
-1. Find a recent `agent-*.jsonl` under
-   `~/.claude/projects/<encoded-cwd>/<session-id>/subagents/`.
-2. **Scrub it.** These files contain real conversation content. Replace every
-   task/prompt and every result/text with synthetic placeholder text. Keep the
-   structure (the `type`, `message.content` block shapes, `tool_use` names,
-   `stop_reason`, `version`) — that's all the parser cares about.
-3. Drop it under `fixtures/cc-<major.minor>/` and open a PR (or attach it to an
-   issue). Mention the exact `claude --version`.
-
-A scrubbed fixture + the version string is enough for us to add an adapter case.
-**Never commit unscrubbed journal content.**
+1. Note your Cursor version and OS.
+2. If you can, attach a **scrubbed** snippet of the relevant
+   `~/.cursor/projects/**/**.jsonl` line(s) — replace every prompt/result with
+   placeholder text and keep only the structure (`type`, tool names, timestamps).
+   **Never paste unscrubbed transcript content** — these files contain real
+   conversation text.
+3. Open an issue with the details.
 
 ## Adding a language
 
-The UI is bilingual (English/Hebrew) and the server is language-neutral. To add
-a language, edit the `I18N` table (and the `PERSONAS_*` / `TOOLS_*` tables) in
-`claude_theater.py` — one file, no Python logic changes. Keep the key set
-identical across languages (the tests and `t()` fallback assume parity).
+The UI is bilingual (English/Hebrew). To add a language, edit the `I18N` table
+in `ui/theater.html` — keep the key set identical across languages. After a UI
+change, re-sync both consumers:
+
+```bash
+python3 build_ui.py                 # inline ui/theater.html into cursor_theater.py
+cd extension && npm run copy-ui     # bundle it into the extension's media/
+```
 
 ## Dev setup
 
-Pure standard library — nothing to install to run or test:
+**Extension** (TypeScript, needs Node.js):
 
 ```bash
-python -m claude_theater                 # run it
-python -m unittest discover -s tests -v  # golden parser + contract tests
+cd extension
+npm install
+npm run compile        # tsc -> out/
+# press F5 for an Extension Development Host, or:
+npm run package        # produces cursor-theater-<version>.vsix
 ```
 
-Optional, matching CI:
+**Python server / UI** (pure standard library):
 
 ```bash
-pipx run ruff check .     # lint (real bugs only: pyflakes + syntax)
-pipx run build            # build sdist + wheel
-pipx run twine check dist/*
+python3 cursor_theater.py --demo    # synthetic office in the browser
+python3 cursor_theater.py           # your real Cursor conversations
 ```
 
 ## Ground rules
 
 - **Privacy first.** Keep everything local; never add telemetry or outbound
-  calls. The server binds `127.0.0.1` only.
-- **No runtime dependencies.** The tool stays single-file stdlib.
-- **Keep the parser isolated.** `parse_agent_event(line) -> Event` is the only
-  code that touches raw JSONL; everything else consumes the stable `Event`.
-- Add or update a fixture + test when you change parsing or the emitted payload.
+  calls. The extension opens no port; the Python server binds `127.0.0.1` only.
+- **Read-only.** Only read the journals; never write or control agents.
+- **Keep the UI a single source of truth** (`ui/theater.html`); run `build_ui.py`
+  and `npm run copy-ui` so the server and extension stay in sync.
+- The Python server (`cursor_theater.py`) and the extension
+  (`extension/src/scan.ts`) have **separate scan implementations** — if you change
+  status/liveness logic, update both.

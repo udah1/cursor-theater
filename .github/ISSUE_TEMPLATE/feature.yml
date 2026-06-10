@@ -14,4 +14,4 @@ body:
     id: idea
     attributes:
       label: Proposed solution (optional)
-      description: How might it look or work? Adding a language or a tool label is often a one-file change — see CONTRIBUTING.md.
+      description: How might it look or work? Adding a language or a tool label is often a small edit to ui/theater.html — see CONTRIBUTING.md.

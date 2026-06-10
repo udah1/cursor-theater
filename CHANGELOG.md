@@ -4,64 +4,32 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-SemVer policy for this tool:
-
-- **PATCH** — parser fixes / new Claude Code build adapters.
-- **MINOR** — new format adapters, themes, languages, dashboard additions.
-- **MAJOR** — breaking changes to the dashboard or the emitted API shape.
-
-## Tested against Claude Code
-
-| Claude Theater | Claude Code |
-| -------------- | ----------- |
-| 0.1.x          | 2.1.x       |
-
 ## [Unreleased]
 
-## [0.1.1] - 2026-06-09
+## [0.1.0] - 2026-06-10
+
+First release of **Cursor Theater**, a port of
+[Claude Theater](https://github.com/asafabram-ship-it/claude-theater) adapted for
+Cursor.
 
 ### Added
 
-- Animated hero (`docs/hero.gif`) in the README — the office in motion.
-- `--port N` flag and `CLAUDE_THEATER_PORT` environment variable to choose the
-  listen port.
+- **Native Cursor extension** (`extension/`) — no HTTP server, no port. Reads
+  `~/.cursor/projects` transcripts and Cursor's global `state.vscdb` in-process,
+  watches for changes, and pushes updates into the webview. Ships an Activity Bar
+  view, a dockable side-bar view, a status-bar item with a live working-agent
+  count, and a full editor-tab command.
+- Conversations grouped **per Cursor instance / project** (one room per project).
+- Real chat **titles / status / timestamps** read from `state.vscdb` via the
+  read-only `sqlite3` CLI (indexed `json_extract`, no full-file load), degrading
+  gracefully to first-message + file mtime when `sqlite3` is unavailable.
+- **Shared single-source UI** (`ui/theater.html`) consumed by both the extension
+  and the standalone Python server. Responsive sidebar layout, RTL support,
+  middle-truncated room titles, and a status/tool legend.
+- **Standalone Python server** (`cursor_theater.py`) for viewing in a real browser
+  and for live UI development; `build_ui.py` inlines the UI for single-file use.
+- Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware), `--demo`
+  mode for a zero-setup synthetic office.
 
-### Changed
-
-- README: lead with the "why" and a "safe by design" note, pull the security
-  hardening into Privacy, collapse the auto-start hooks, and give a precise VS
-  Code extension install path (prebuilt `.vsix` on Releases, or build from source).
-
-### Fixed
-
-- On Windows, a second instance no longer silently double-binds the port
-  (`allow_reuse_address` is off there); a duplicate now fails with a clear
-  message suggesting `--port`.
-- The startup banner is flushed, so it shows even when stdout is piped.
-- Real (non-demo) mode with no journals now prints a hint to try `--demo`.
-
-## [0.1.0] - 2026-06-08
-
-### Added
-
-- Initial release: a single-file, pure-stdlib web app that visualizes Claude
-  Code subagents as a live office (one room per conversation), served on
-  `127.0.0.1:7333`.
-- Isolated parser `parse_agent_event(line) -> Event` — the only code that
-  touches the raw journal format — with degrade-not-crash handling.
-- Non-blocking version banner when journals come from an untested Claude Code
-  version.
-- Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware).
-- `--demo` mode: a synthetic, populated office (no real journals read) for a
-  zero-setup first run and for capturing screenshots / the Hero GIF.
-- `--version`, `--help`, `--no-browser` flags; the app opens the browser itself
-  once the port is bound.
-- Packaging for PyPI/pipx (`claude-theater` / `python -m claude_theater`) and
-  CI across Windows/macOS/Linux × Python 3.9–3.13.
-- VS Code extension (versioned independently, shipped as a `.vsix` on the GitHub
-  release): the office in an interactive WebviewPanel, with background auto-start
-  and a status-bar toggle.
-
-[Unreleased]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/asafabram-ship-it/claude-theater/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/asafabram-ship-it/claude-theater/releases/tag/v0.1.0
+[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.0...HEAD
+[0.1.0]: https://github.com/udah1/cursor-theater/releases/tag/cursor-v0.1.0

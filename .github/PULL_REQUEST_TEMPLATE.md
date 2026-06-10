@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to Claude Theater! Keep it short. -->
+<!-- Thanks for contributing to Cursor Theater! Keep it short. -->
 
 ## What & why
 
@@ -6,12 +6,11 @@
 
 ## Checklist
 
-- [ ] `python -m unittest discover -s tests` passes
-- [ ] `ruff check .` is clean
-- [ ] If this touches the journal parser (`parse_agent_event`) or the data the UI
-      reads, I considered Claude Code **format drift** and added/updated a fixture
-      under `fixtures/` if needed
+- [ ] The extension still compiles (`cd extension && npm run compile`)
+- [ ] If this touches the UI (`ui/theater.html`), I ran `python3 build_ui.py` and
+      `cd extension && npm run copy-ui` so the server and extension stay in sync
+- [ ] If this changes status/liveness or the emitted payload, I updated **both**
+      `cursor_theater.py` and `extension/src/scan.ts`
 - [ ] If this adds or changes any UI string, both `en` and `he` entries in the
       `I18N` table are updated (parity)
-- [ ] No new third-party runtime dependencies (the server stays single-file,
-      standard-library only)
+- [ ] No telemetry or outbound network calls added

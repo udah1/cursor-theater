@@ -1,0 +1,76 @@
+{
+  "name": "cursor-theater",
+  "displayName": "Cursor Theater",
+  "description": "A live, grouped office of your Cursor agent conversations - shown natively in a panel, no server.",
+  "version": "0.1.0",
+  "publisher": "cursor-theater",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursorTheater.show",
+        "title": "Cursor Theater: Show (menu)"
+      },
+      {
+        "command": "cursorTheater.showSide",
+        "title": "Cursor Theater: Show in Side Bar"
+      },
+      {
+        "command": "cursorTheater.open",
+        "title": "Cursor Theater: Open in Editor"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cursorTheater",
+          "title": "Cursor Theater",
+          "icon": "media/theater.svg"
+        }
+      ]
+    },
+    "views": {
+      "cursorTheater": [
+        {
+          "id": "cursorTheater.view",
+          "name": "Cursor Agents",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cursor Theater",
+      "properties": {
+        "cursorTheater.maxAgeMinutes": {
+          "type": "number",
+          "default": 180,
+          "description": "Only show conversations whose transcript changed within this many minutes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "copy-ui": "node ./scripts/copy-ui.js",
+    "vscode:prepublish": "npm run compile && npm run copy-ui",
+    "package": "npm run vscode:prepublish && vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}

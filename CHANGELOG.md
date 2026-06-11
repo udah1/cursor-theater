@@ -6,6 +6,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-11
+
+### Fixed
+
+- **Side view occasionally opened blank** until the next background scan. The
+  webview now re-requests data on focus/visibility changes (plus a one-shot retry
+  if the first push is missed), and the host sends a delayed safety-net scan right
+  after wiring a webview — so the first paint can't be lost to a listener race.
+
 ## [0.1.4] - 2026-06-11
 
 ### Changed
@@ -77,7 +86,8 @@ Cursor.
 - Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware), `--demo`
   mode for a zero-setup synthetic office.
 
-[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.4...HEAD
+[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.5...HEAD
+[0.1.5]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.4...cursor-v0.1.5
 [0.1.4]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.3...cursor-v0.1.4
 [0.1.3]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.2...cursor-v0.1.3
 [0.1.2]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.1...cursor-v0.1.2

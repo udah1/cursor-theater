@@ -224,6 +224,10 @@ function wireWebview(webview: vscode.Webview, pageHtml: string) {
       void runScan();
     }
   });
+  // Safety net for the first paint: the webview also posts "ready", but if that
+  // message (or our proactive scan) loses the listener race, this delayed scan
+  // guarantees the view receives a payload without waiting for the 6s interval.
+  setTimeout(() => void runScan(), 800);
 }
 
 // ---- side view (dockable: Activity Bar / Secondary Side Bar / Panel) ------

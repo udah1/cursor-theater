@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import pathname2url
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 def _default_port():
     """Port from $CURSOR_THEATER_PORT, else 7333. The --port flag overrides this."""
@@ -1886,7 +1886,14 @@ applyLang();
 if(__CT_VS){
   window.addEventListener("message",function(ev){ const d=ev.data||{};
     if(d&&d.type==="agents"){ booted=true; lastLiveMs=Date.now(); render(d.payload); failStreak=0; setConnected(true); } });
-  __CT_VS.postMessage({type:"ready"});      // ask the host for the first scan
+  var requestScan=function(){ try{ __CT_VS.postMessage({type:"ready"}); }catch(e){} };
+  requestScan();                            // ask the host for the first scan
+  // Safety nets so a docked side view never stays blank: re-request if the first
+  // push was missed (host/listener race), and whenever the view is refocused or
+  // made visible again after being hidden.
+  setTimeout(function(){ if(!booted) requestScan(); }, 1500);
+  document.addEventListener("visibilitychange",function(){ if(!document.hidden) requestScan(); });
+  window.addEventListener("focus",requestScan);
 } else { poll(); setInterval(poll,POLL_MS); }
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});

@@ -6,6 +6,18 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-11
+
+### Added
+
+- **Background update check**: the extension polls GitHub releases on an interval
+  (`cursorTheater.updateCheckMinutes`, default 60; `0` disables) plus once shortly
+  after startup. When a newer release exists, the status bar shows
+  `Agents Theater (N) → vX.Y.Z` with a warning background; clicking opens the menu
+  to download it. The status bar now always shows the working count in braces.
+- A "Check for updates (vX.Y.Z)" item in the status-bar menu, and a draggable-view
+  hint on the "Side-bar theater" item.
+
 ## [0.1.1] - 2026-06-11
 
 ### Changed
@@ -48,6 +60,7 @@ Cursor.
 - Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware), `--demo`
   mode for a zero-setup synthetic office.
 
-[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.1...HEAD
+[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.2...HEAD
+[0.1.2]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.1...cursor-v0.1.2
 [0.1.1]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.0...cursor-v0.1.1
 [0.1.0]: https://github.com/udah1/cursor-theater/releases/tag/cursor-v0.1.0

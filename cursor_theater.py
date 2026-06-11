@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from urllib.request import pathname2url
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 def _default_port():
     """Port from $CURSOR_THEATER_PORT, else 7333. The --port flag overrides this."""
@@ -1046,6 +1046,8 @@ PAGE = """<!DOCTYPE html>
   .demo-chip button{ font:inherit; font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line);
                      color:var(--ink-2); border-radius:var(--r-pill); padding:3px 11px; cursor:pointer; }
   .demo-chip[hidden]{ display:none; }
+  /* Embedded (Cursor webview): no demo data source, so hide its affordances. */
+  html.embedded .btn-demo, html.embedded #demoChip{ display:none !important; }
 
   /* ---------- room (one Cursor instance / project) ---------- */
   .room{ position:relative; background:linear-gradient(180deg,var(--surface),var(--surface-2));
@@ -1387,6 +1389,7 @@ const I18N={
   en:{ appTitle:"Cursor Theater", docTitle:"Cursor Theater", showDone:"Show done/stopped", toggleFinished:"Show/hide finished in this conversation", toggleStopped:"Show/hide stopped in this conversation", switchTo:"עברית",
        emptyOffice:"The office is empty",
        emptySub:"Start an agent conversation in Cursor — or see what a busy office looks like:",
+       emptySubEmbedded:"Start an agent conversation in Cursor — it'll appear here as it works.",
        watchDemo:"▶ Watch a live demo", demoLabel:"Demo", exitDemo:"Exit",
        langHint:"Switch language (Hebrew / English)", close:"Close",
        toLight:"Switch to light mode", toDark:"Switch to dark mode",
@@ -1413,6 +1416,7 @@ const I18N={
   he:{ appTitle:"משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו/נעצרו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", toggleStopped:"הצג/הסתר שנעצרו בשיחה זו", switchTo:"English",
        emptyOffice:"המשרד ריק",
        emptySub:"הפעילו שיחת סוכן ב-Cursor - או הציצו איך נראה משרד עמוס:",
+       emptySubEmbedded:"הפעילו שיחת סוכן ב-Cursor - היא תופיע כאן בזמן העבודה.",
        watchDemo:"▶ צפו בדמו חי", demoLabel:"דמו", exitDemo:"יציאה",
        langHint:"החלפת שפה (עברית / אנגלית)", close:"סגירה",
        toLight:"מעבר למצב בהיר", toDark:"מעבר למצב כהה",
@@ -1621,8 +1625,10 @@ function emptyHTML(kind){
   const msg = kind==="noactive" ? t("emptyNoActive") : kind==="nonewindow" ? t("emptyNoneInWindow")
             : kind==="nomatch" ? t("emptyNoMatch") : t("emptyOffice");
   let h='<div class="e-scene" aria-hidden="true">'+ICON.building+'</div><div class="e-title">'+esc(msg)+'</div>';
-  if(kind==="office") h+='<div class="e-sub">'+esc(t("emptySub"))+'</div>'
-                        +'<button class="btn-demo" type="button">'+esc(t("watchDemo"))+'</button>';
+  // The demo's synthetic office comes from the Python server (?demo=1); a push-driven
+  // webview has no demo data source, so embedded we drop the demo CTA and adjust copy.
+  if(kind==="office") h+='<div class="e-sub">'+esc(EMBEDDED?t("emptySubEmbedded"):t("emptySub"))+'</div>'
+                        +(EMBEDDED?'':'<button class="btn-demo" type="button">'+esc(t("watchDemo"))+'</button>');
   return h;
 }
 function matchesSearch(a,q){ return (
@@ -1861,6 +1867,10 @@ function setConnected(ok){ connected=ok; const el=document.getElementById("recon
 //  * Standalone browser/Python server -> the page POLLS /api/agents over HTTP.
 // acquireVsCodeApi only exists inside a webview, so its presence picks the mode.
 const __CT_VS=(typeof acquireVsCodeApi==="function")?acquireVsCodeApi():null;
+// Embedded = running inside the Cursor/VS Code webview (push-driven, no Python
+// server). The synthetic demo has no data source here, so we hide its affordances.
+const EMBEDDED=!!__CT_VS;
+if(EMBEDDED) document.documentElement.classList.add("embedded");
 async function poll(){ if(__CT_VS) return;           // webview is push-driven; never fetch
   if(polling) return;          // in-flight guard: never stack scans
   polling=true;

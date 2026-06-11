@@ -6,6 +6,23 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-11
+
+### Changed
+
+- The side-bar view header now reads "Cursor Theater: Cursor Agents" instead of
+  the duplicated/empty label.
+
+### Fixed
+
+- Hide the "Watch a live demo" button and demo chip inside the extension webview
+  (it has no demo data source there); the empty state now points you to start an
+  agent conversation. The demo still works in the browser via the Python server.
+- Responsive narrow-layout fixes: move the responsive `@media` blocks after the
+  base rules so they actually apply (`<360px` header/room padding, gaps, hidden
+  project icon), middle-truncate long room titles, and override the webview
+  host's injected `body` padding so gutters match the browser.
+
 ## [0.1.0] - 2026-06-10
 
 First release of **Cursor Theater**, a port of
@@ -31,5 +48,6 @@ Cursor.
 - Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware), `--demo`
   mode for a zero-setup synthetic office.
 
-[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.0...HEAD
+[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.1...HEAD
+[0.1.1]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.0...cursor-v0.1.1
 [0.1.0]: https://github.com/udah1/cursor-theater/releases/tag/cursor-v0.1.0

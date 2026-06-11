@@ -30,6 +30,12 @@ let debounce: NodeJS.Timeout | undefined;
 let scanning = false;
 let queued = false;
 
+// Update-check state. updateAvailable is set (to the newer release) by both the
+// manual menu action and the silent background poll; the status bar reflects it.
+let updateAvailable: LatestRelease | undefined;
+let lastCounts = { running: 0, idle: 0, aborted: 0, done: 0 };
+let updateTimer: NodeJS.Timeout | undefined;
+
 function nonce(): string {
   let s = "";
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -105,10 +111,31 @@ function updateStatusItem(payload: Payload) {
       done += 1;
     }
   }
-  statusItem.text = running > 0 ? `$(broadcast) Agents Theater ${running}` : "$(play-circle) Agents Theater";
-  statusItem.tooltip =
-    `Cursor Theater - ${running} working, ${idle} idle, ${aborted} stopped, ${done} finished\n` +
-    "Click to open the theater";
+  lastCounts = { running, idle, aborted, done };
+  renderStatusItem();
+}
+
+// Composes the status bar from the latest scan counts + the update state, so the
+// live working-count and the "update available" badge never clobber each other.
+function renderStatusItem() {
+  if (!statusItem) {
+    return;
+  }
+  const { running, idle, aborted, done } = lastCounts;
+  const icon = running > 0 ? "$(broadcast)" : "$(play-circle)";
+  let text = `${icon} Agents Theater (${running})`;
+  let tip = `Cursor Theater - ${running} working, ${idle} idle, ${aborted} stopped, ${done} finished`;
+  if (updateAvailable) {
+    const next = updateAvailable.tag.replace(/^cursor-v/i, "v");
+    text += ` → ${next}`;
+    statusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    tip = `Update available: ${next} (you have v${extensionVersion})\n` + tip + "\nClick to open the menu";
+  } else {
+    statusItem.backgroundColor = undefined;
+    tip += "\nClick to open the theater";
+  }
+  statusItem.text = text;
+  statusItem.tooltip = tip;
 }
 
 async function runScan() {
@@ -330,9 +357,13 @@ async function checkForUpdates() {
     return;
   }
   if (!latest.tag || compareVersions(latest.tag, extensionVersion) <= 0) {
+    updateAvailable = undefined;
+    renderStatusItem();
     void vscode.window.showInformationMessage(`Cursor Theater is up to date (v${extensionVersion}).`);
     return;
   }
+  updateAvailable = latest;
+  renderStatusItem();
   const target = latest.vsixUrl || latest.htmlUrl || fallbackUrl;
   const label = latest.vsixUrl ? "Download .vsix" : "Open release";
   const pick = await vscode.window.showInformationMessage(
@@ -345,6 +376,28 @@ async function checkForUpdates() {
   } else if (pick === "Release notes") {
     void vscode.env.openExternal(vscode.Uri.parse(latest.htmlUrl || fallbackUrl));
   }
+}
+
+// Silent periodic check: only flips the status-bar badge, never pops a dialog.
+async function backgroundUpdateCheck() {
+  try {
+    const latest = await fetchLatestRelease();
+    updateAvailable = latest.tag && compareVersions(latest.tag, extensionVersion) > 0 ? latest : undefined;
+    renderStatusItem();
+  } catch {
+    // offline / rate-limited: leave the current badge state untouched
+  }
+}
+
+function startUpdateChecks(context: vscode.ExtensionContext) {
+  const minutes = vscode.workspace.getConfiguration("cursorTheater").get<number>("updateCheckMinutes", 60);
+  if (!minutes || minutes <= 0) {
+    return; // disabled
+  }
+  // Defer the first check so it never blocks activation; then poll on the interval.
+  const kickoff = setTimeout(() => void backgroundUpdateCheck(), 8000);
+  updateTimer = setInterval(() => void backgroundUpdateCheck(), minutes * 60 * 1000);
+  context.subscriptions.push({ dispose: () => clearTimeout(kickoff) });
 }
 
 async function showMenu() {
@@ -391,11 +444,16 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   startWatching();
+  startUpdateChecks(context);
   void runScan();
 }
 
 export function deactivate() {
   stopWatching();
+  if (updateTimer) {
+    clearInterval(updateTimer);
+    updateTimer = undefined;
+  }
   if (panel) {
     panel.dispose();
     panel = undefined;

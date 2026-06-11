@@ -56,6 +56,11 @@
           "type": "number",
           "default": 180,
           "description": "Only show conversations whose transcript changed within this many minutes."
+        },
+        "cursorTheater.updateCheckMinutes": {
+          "type": "number",
+          "default": 60,
+          "description": "How often (in minutes) to check GitHub for a newer release. Set to 0 to disable background update checks."
         }
       }
     }

@@ -2,7 +2,7 @@
   "name": "cursor-theater",
   "displayName": "Cursor Theater",
   "description": "A live, grouped office of your Cursor agent conversations - shown natively in a panel, no server.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "cursor-theater",
   "license": "MIT",
   "engines": {

@@ -6,6 +6,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-11
+
+### Added
+
+- **One-click in-app update**: the "Update available" prompt now offers **Update
+  now**, which downloads the release `.vsix` and installs it inside Cursor (via
+  `workbench.extensions.installExtension`), then offers to reload — no manual
+  download/install. Falls back to opening the release page if the programmatic
+  install isn't available.
+
 ## [0.1.2] - 2026-06-11
 
 ### Added
@@ -60,7 +70,8 @@ Cursor.
 - Bilingual UI: English by default, Hebrew toggle (persisted, RTL-aware), `--demo`
   mode for a zero-setup synthetic office.
 
-[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.2...HEAD
+[Unreleased]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.3...HEAD
+[0.1.3]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.2...cursor-v0.1.3
 [0.1.2]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.1...cursor-v0.1.2
 [0.1.1]: https://github.com/udah1/cursor-theater/compare/cursor-v0.1.0...cursor-v0.1.1
 [0.1.0]: https://github.com/udah1/cursor-theater/releases/tag/cursor-v0.1.0

@@ -10,6 +10,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import * as https from "https";
 import { scan, PROJECTS_DIR } from "./scan";
 import { cursorStateDb } from "./composer";
@@ -338,6 +339,72 @@ function fetchLatestRelease(): Promise<LatestRelease> {
   });
 }
 
+// Download a URL to a local file, following GitHub's redirect to its asset CDN.
+function downloadFile(url: string, dest: string, redirects = 5): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { "User-Agent": "cursor-theater-extension", Accept: "application/octet-stream" } }, (res) => {
+      const sc = res.statusCode || 0;
+      if (sc >= 300 && sc < 400 && res.headers.location) {
+        res.resume();
+        if (redirects <= 0) {
+          reject(new Error("too many redirects"));
+          return;
+        }
+        resolve(downloadFile(new URL(res.headers.location, url).toString(), dest, redirects - 1));
+        return;
+      }
+      if (sc < 200 || sc >= 300) {
+        res.resume();
+        reject(new Error(`download ${sc}`));
+        return;
+      }
+      const file = fs.createWriteStream(dest);
+      res.pipe(file);
+      file.on("finish", () => file.close(() => resolve()));
+      file.on("error", (e) => fs.unlink(dest, () => reject(e)));
+    });
+    req.on("error", reject);
+    req.setTimeout(60000, () => req.destroy(new Error("timeout")));
+  });
+}
+
+// Download the release .vsix and install it in-place via the editor command, then
+// offer to reload (a new version of an already-installed extension needs a reload).
+async function installUpdate(latest: LatestRelease) {
+  const fallbackUrl = latest.htmlUrl || `https://github.com/${RELEASES_REPO}/releases/latest`;
+  if (!latest.vsixUrl) {
+    void vscode.env.openExternal(vscode.Uri.parse(fallbackUrl));
+    return;
+  }
+  const next = latest.tag.replace(/^cursor-v/i, "v");
+  const dest = path.join(os.tmpdir(), `cursor-theater-${latest.tag.replace(/[^\w.\-]/g, "_")}.vsix`);
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Cursor Theater: downloading ${next}…`, cancellable: false },
+      () => downloadFile(latest.vsixUrl as string, dest)
+    );
+    await vscode.commands.executeCommand("workbench.extensions.installExtension", vscode.Uri.file(dest));
+  } catch (e) {
+    const open = await vscode.window.showErrorMessage(
+      `Couldn't install the update automatically (${(e as Error).message}). You can install it manually.`,
+      "Open release"
+    );
+    if (open) {
+      void vscode.env.openExternal(vscode.Uri.parse(fallbackUrl));
+    }
+    return;
+  } finally {
+    fs.unlink(dest, () => {}); // best-effort cleanup; install has already read the file
+  }
+  const reload = await vscode.window.showInformationMessage(
+    `Cursor Theater ${next} installed. Reload to finish updating.`,
+    "Reload window"
+  );
+  if (reload) {
+    void vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
 async function checkForUpdates() {
   const fallbackUrl = `https://github.com/${RELEASES_REPO}/releases/latest`;
   let latest: LatestRelease;
@@ -364,17 +431,20 @@ async function checkForUpdates() {
   }
   updateAvailable = latest;
   renderStatusItem();
-  const target = latest.vsixUrl || latest.htmlUrl || fallbackUrl;
-  const label = latest.vsixUrl ? "Download .vsix" : "Open release";
-  const pick = await vscode.window.showInformationMessage(
-    `Update available: ${latest.tag.replace(/^cursor-v/i, "v")} (you have v${extensionVersion}).`,
-    label,
-    "Release notes"
-  );
-  if (pick === label) {
-    void vscode.env.openExternal(vscode.Uri.parse(target));
-  } else if (pick === "Release notes") {
-    void vscode.env.openExternal(vscode.Uri.parse(latest.htmlUrl || fallbackUrl));
+  const next = latest.tag.replace(/^cursor-v/i, "v");
+  const msg = `Update available: ${next} (you have v${extensionVersion}).`;
+  if (latest.vsixUrl) {
+    const pick = await vscode.window.showInformationMessage(msg, "Update now", "Release notes");
+    if (pick === "Update now") {
+      await installUpdate(latest);
+    } else if (pick === "Release notes") {
+      void vscode.env.openExternal(vscode.Uri.parse(latest.htmlUrl || fallbackUrl));
+    }
+  } else {
+    const open = await vscode.window.showInformationMessage(msg, "Open release");
+    if (open) {
+      void vscode.env.openExternal(vscode.Uri.parse(latest.htmlUrl || fallbackUrl));
+    }
   }
 }
 

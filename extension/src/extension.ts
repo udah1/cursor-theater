@@ -351,7 +351,7 @@ async function showMenu() {
   type Item = vscode.QuickPickItem & { action: "editor" | "side" | "refresh" | "update" };
   const items: Item[] = [
     { label: "$(window) Full-screen theater", detail: "Open in a full editor tab", action: "editor" },
-    { label: "$(layout-sidebar-right) Side-bar theater", detail: "Reveal the docked side view", action: "side" },
+    { label: "$(layout-sidebar-right) Side-bar theater", detail: "Reveal the docked side view — drag it to either side bar or the panel", action: "side" },
     { label: "$(refresh) Refresh now", detail: "Rescan conversations immediately", action: "refresh" },
     { label: `$(cloud-download) Check for updates (v${extensionVersion})`, detail: "Compare with the latest GitHub release", action: "update" },
   ];

@@ -6,6 +6,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-06-15
+
+### Changed
+
+- **Very narrow screens (< 360px)**: the desk row now stacks into two rows — the
+  conversation title spans the full width on top (with the timer at the end), and
+  a smaller avatar drops down inline with the activity text and the status badge.
+  This lets much more of the title show. Wider phones keep the half-size avatar.
+
 ## [0.1.6] - 2026-06-15
 
 ### Changed

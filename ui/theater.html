@@ -428,8 +428,23 @@
     /* trim the box's horizontal padding everywhere inside the room */
     .rh{ padding:13px 6px; gap:6px; }
     .floor{ padding:0; }
-    .ws{ padding:9px 8px; }
     #app{ padding:10px 6px 40px; gap:10px; }                  /* widen the content: trim the app's side gutters */
+    /* Very narrow only: stack the desk into two rows so the title gets the full
+       width. Row 1 is the title (+ timer at the end); row 2 drops the now-smaller
+       avatar inline with the activity text and the status badge ("done" etc.).
+       display:contents flattens the .ws-main/.ws-meta wrappers so .name/.act/
+       .timer/.badge become direct grid items we can place. */
+    .ws{ display:grid; align-items:center; column-gap:8px; row-gap:1px; padding:9px 8px;
+         grid-template-columns:auto 1fr auto;
+         grid-template-areas:"name name timer" "avatar act badge"; }
+    .ws-main, .ws-meta{ display:contents; }
+    .name{ grid-area:name; }
+    .timer{ grid-area:timer; }
+    .act{ grid-area:act; }
+    .badge{ grid-area:badge; }
+    .avatar{ grid-area:avatar; width:18px; height:18px; font-size:10px; }
+    .ws.is-session .avatar .lead{ width:8px; height:8px; bottom:-1px; inset-inline-end:-1px; border-width:1.5px; }
+    .ws.is-session .avatar .lead .ic{ width:5px; height:5px; }
   }
 </style>
 </head>

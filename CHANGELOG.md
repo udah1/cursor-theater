@@ -6,6 +6,14 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-15
+
+### Changed
+
+- **Mobile layout**: on narrow viewports the persona avatar is now half-size
+  (its status ring and lead badge scale with it), and the desk row gap is tighter
+  (8px). Conversation rows reclaim horizontal space on phones.
+
 ## [0.1.5] - 2026-06-11
 
 ### Fixed

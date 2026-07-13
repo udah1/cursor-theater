@@ -19,7 +19,8 @@ export interface Agent {
   session_full: string;
   cwd: string;
   project: string;
-  path?: string; // full absolute working directory (card-title tooltip)
+  project_name?: string; // clean project folder name (room label), from recorded cwd
+  path?: string; // full absolute working directory (room-title tooltip)
   mtime_ms: number;
   is_session: boolean;
 }

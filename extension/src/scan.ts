@@ -436,6 +436,63 @@ function projectPath(transcriptPath: string): string {
   return real;
 }
 
+let siblingBasenames: Set<string> | null = null;
+function resolvableBasenames(): Set<string> {
+  if (siblingBasenames) {
+    return siblingBasenames;
+  }
+  const names = new Set<string>();
+  try {
+    for (const e of fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })) {
+      if (!e.isDirectory()) {
+        continue;
+      }
+      const real = decodeProjectDir(e.name);
+      if (real) {
+        const b = path.basename(real.replace(/[\\/]+$/, ""));
+        if (b) {
+          names.add(b);
+        }
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  siblingBasenames = names;
+  return names;
+}
+
+const displayCache = new Map<string, string>();
+
+// A clean project folder name for the room label. Uses the decoded real path when it
+// resolves; otherwise (a moved/deleted project) recovers the folder name from a
+// still-resolvable sibling whose basename the encoded dir name ends with.
+function projectDisplay(transcriptPath: string): string {
+  const parts = transcriptPath.replace(/\\/g, "/").split("/");
+  const idx = parts.indexOf("agent-transcripts");
+  if (idx <= 0) {
+    return "";
+  }
+  const enc = parts[idx - 1];
+  const cached = displayCache.get(enc);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const real = decodeProjectDir(enc);
+  let name = "";
+  if (real) {
+    name = path.basename(real.replace(/[\\/]+$/, ""));
+  } else {
+    for (const b of resolvableBasenames()) {
+      if ((enc === b || enc.endsWith("-" + b)) && b.length > name.length) {
+        name = b;
+      }
+    }
+  }
+  displayCache.set(enc, name);
+  return name;
+}
+
 async function sessionSummary(sessionFile: string): Promise<{ topic: string; cwd: string }> {
   const mtime = statMtimeMs(sessionFile);
   if (mtime === null) {
@@ -593,6 +650,7 @@ async function scanSessions(nowSec: number): Promise<Agent[]> {
       status = "stale";
     }
     mtimeMs = lastActivityMs || mtimeMs;
+    const projName = projectDisplay(p) || cwd;
     entries.push({
       id: uuid,
       persona_id: pid,
@@ -611,7 +669,8 @@ async function scanSessions(nowSec: number): Promise<Agent[]> {
       session_full: uuid,
       cwd,
       project: cwd,
-      path: projectPath(p) || cwd,
+      project_name: projName,
+      path: projectPath(p) || projName || cwd,
       mtime_ms: mtimeMs,
       is_session: true,
     });
@@ -723,6 +782,7 @@ async function scanSubAgents(
         session_full: session,
         cwd: firstEv.raw.cwd || "",
         project,
+        project_name: project ? path.basename(project.replace(/[\\/]+$/, "")) : project,
         path: (firstEv.raw.cwd as string) || project,
         mtime_ms: Math.floor(st.mtimeMs),
         is_session: false,

@@ -6,6 +6,26 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-07-13
+
+### Added
+
+- Click a room (Cursor instance) title to reveal and copy its full folder path.
+  The path shows in a wider, longer-lived toast whose text is selectable (drag to
+  copy manually; it also auto-copies to the clipboard, stays ~6s, and pauses while hovered).
+  The title also carries the path as a hover tooltip. The per-conversation
+  card-title path tooltip added in 0.1.10 was removed in favor of this.
+
+### Fixed
+
+- Usage chip sometimes didn't open the panel when clicked (especially on the
+  icon/number): a background refresh could detach the clicked element and let the
+  outside-click handler immediately re-close the panel. Chip/panel clicks now
+  stop propagation, and chip children ignore pointer events.
+- Room labels and hidden-instance chips now show the clean project folder name
+  even when the project folder was moved/deleted (recovered from a still-resolvable
+  sibling), instead of the long encoded path.
+
 ## [0.1.11] - 2026-07-13
 
 ### Changed

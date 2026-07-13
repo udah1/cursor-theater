@@ -709,6 +709,53 @@ def project_path(transcript_path):
     return real
 
 
+_SIBLING_BASENAMES = None  # cached set of folder names from projects that DO resolve
+
+
+def _resolvable_basenames():
+    global _SIBLING_BASENAMES
+    if _SIBLING_BASENAMES is not None:
+        return _SIBLING_BASENAMES
+    names = set()
+    try:
+        for d in os.listdir(PROJECTS_DIR):
+            real = _decode_project_dir(d)
+            if real:
+                b = os.path.basename(real.rstrip(os.sep))
+                if b:
+                    names.add(b)
+    except Exception:
+        pass
+    _SIBLING_BASENAMES = names
+    return names
+
+
+_DISPLAY_CACHE = {}  # encoded folder name -> clean project display name
+
+
+def project_display(transcript_path):
+    """A clean project folder name for the room label. Uses the decoded real path
+    when it resolves; otherwise (a moved/deleted project) recovers the folder name
+    from a still-resolvable sibling whose basename the encoded name ends with."""
+    parts = transcript_path.replace("\\", "/").split("/")
+    try:
+        enc = parts[parts.index("agent-transcripts") - 1]
+    except ValueError:
+        return ""
+    if enc in _DISPLAY_CACHE:
+        return _DISPLAY_CACHE[enc]
+    real = _decode_project_dir(enc)
+    if real:
+        name = os.path.basename(real.rstrip(os.sep))
+    else:
+        name = ""
+        for b in _resolvable_basenames():
+            if (enc == b or enc.endswith("-" + b)) and len(b) > len(name):
+                name = b
+    _DISPLAY_CACHE[enc] = name
+    return name
+
+
 def session_summary(session_file):
     """A conversation's subject (its first user message, cleaned of Cursor's tag
     wrappers) and a room label derived from the project folder. Cached by mtime;
@@ -763,6 +810,7 @@ def scan_sessions(now):
         if (now - mtime) / 60.0 > MAX_AGE_MIN:
             continue
         topic, cwd = session_summary(path)
+        proj_name = project_display(path) or cwd
         uuid = os.path.basename(path)[:-6]
         try:
             events, _skip, _vers = parse_events(read_tail_lines(path))
@@ -833,7 +881,8 @@ def scan_sessions(now):
             "result": result if is_done else None,
             "start_ms": start_ms, "end_ms": end_ms if is_done else None,
             "session": uuid[:8], "session_full": uuid,
-            "cwd": cwd, "project": cwd, "path": project_path(path) or cwd,
+            "cwd": cwd, "project": cwd, "project_name": proj_name,
+            "path": project_path(path) or proj_name or cwd,
             "mtime_ms": mtime_ms,
             "is_session": True,
         })
@@ -931,6 +980,7 @@ def scan_agents():
                 "start_ms": start_ms, "end_ms": end_ms,
                 "session": session[:8], "session_full": session,
                 "cwd": first_ev.raw.get("cwd", ""), "project": project,
+                "project_name": os.path.basename((project or "").rstrip("/")) or project,
                 "path": first_ev.raw.get("cwd", "") or project,
                 "mtime_ms": int(mtime * 1000), "is_session": False,
             }
@@ -999,7 +1049,8 @@ def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type=""
         "start_ms": int((now - start_offset) * 1000),
         "end_ms": int((now - 2) * 1000) if status == "done" else None,
         "session": session[:8], "session_full": session,
-        "cwd": cwd, "project": cwd, "path": cwd, "mtime_ms": int((now - mtime_offset) * 1000),
+        "cwd": cwd, "project": cwd, "project_name": os.path.basename(cwd.rstrip("/")) or cwd,
+        "path": cwd, "mtime_ms": int((now - mtime_offset) * 1000),
         "is_session": is_session,
     }
 
@@ -1271,6 +1322,10 @@ PAGE = """<!DOCTYPE html>
           border-radius:var(--r-sm); padding:10px 15px; font-size:var(--fs-md); box-shadow:var(--shadow-toast);
           max-width:300px; opacity:0; transform:translateY(8px); transition:opacity .25s,transform .25s; }
   .toast.show{ opacity:1; transform:translateY(0); }
+  /* selectable variant (e.g. the room path popup): re-enable mouse interaction so the
+     text can be highlighted/copied, widen it, and let long paths wrap. */
+  .toast.sel{ pointer-events:auto; -webkit-user-select:text; user-select:text; cursor:text;
+              max-width:min(460px,86vw); word-break:break-all; font-family:var(--mono); font-size:var(--fs-sm); }
   #search{ font:inherit; font-size:var(--fs-md); background:var(--surface-3); border:1px solid var(--chip-line);
            color:var(--ink); border-radius:var(--r-sm); padding:0 12px; width:210px; max-width:42vw; height:32px; line-height:30px; }
   #search::-webkit-search-cancel-button{ align-self:center; }
@@ -1315,6 +1370,11 @@ PAGE = """<!DOCTYPE html>
               padding:4px 11px; transition:background .15s,border-color .15s; white-space:nowrap; }
   .usagechip:hover{ background:var(--surface-3); border-color:var(--line-strong,var(--line)); }
   .usagechip[hidden]{ display:none; }
+  /* Children ignore pointer events so the button itself is always the click target.
+     The chip's innerHTML is rebuilt on every usage refresh; without this, a refresh
+     landing between mousedown and mouseup removes the pressed child and the browser
+     never fires 'click' -- so the panel intermittently failed to open. */
+  .usagechip > *{ pointer-events:none; }
   .usagechip .ic{ width:15px; height:15px; opacity:.85; flex:none; }
   .usagechip .uc-req{ font-family:var(--mono); }
   .usagechip .uc-bar{ width:44px; height:6px; border-radius:var(--r-pill); background:var(--surface-3);
@@ -1379,7 +1439,8 @@ PAGE = """<!DOCTYPE html>
   .rh{ display:flex; align-items:center; gap:10px; padding:13px 16px;
        border-bottom:1px solid var(--line-soft); font-size:var(--fs-md); }
   .rt{ margin:0; font-size:var(--fs-lg); font-weight:700; color:var(--ink); display:inline-flex; align-items:center; gap:9px; min-width:0; }
-  .rt .rt-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rt .rt-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .rt .rt-name:hover{ text-decoration:underline; text-underline-offset:2px; }
   .rt small{ color:var(--ink-dimmer); font-weight:500; font-size:var(--fs-sm); font-family:var(--mono); flex:none; }
   .rt small .rc-pre, .rt small .rc-post{ display:none; }   /* "N chats" by default; the narrow breakpoint shows "(N)" instead */
   .rc{ color:var(--ink-dim); display:inline-flex; align-items:center; gap:9px; font-size:var(--fs-sm); }
@@ -1886,7 +1947,7 @@ function fmtAgo(ms){ if(ms==null||ms<0) return "--:--"; const s=Math.floor(ms/10
   const m=Math.floor(s/60); if(m<60) return "~"+m+t("tMin");
   return "~"+Math.floor(m/60)+t("tHour"); }
 function baseName(p){ return (p||"").replace(/[\\\\/]+$/,"").split(/[\\\\/]/).pop()||"—"; }
-function roomLabel(a){ return baseName(a.project||a.cwd); }   // the conversation's project, not a nested subagent cwd
+function roomLabel(a){ return a.project_name || baseName(a.project||a.cwd); }   // clean project folder name (from the transcript's recorded cwd), not a nested subagent cwd
 function roomKey(a){ return a.project||a.cwd||a.session_full; }  // a room = one Cursor instance (project); desks inside = its conversations
 function deskName(a){ return a.title||a.role||personaName(a); }  // the conversation's real Cursor title labels its desk
 const COLORS=["#5b6ee0","#e07a5b","#3fae74","#c45bd0","#e0b84a","#4ab3c4","#d05b7a","#7a86b8"];
@@ -1910,10 +1971,15 @@ let announceT=null;
 function announce(msg){ const el=document.getElementById("live"); if(!el) return;  // SR-only live region
   el.textContent = el.textContent ? (el.textContent+" · "+msg) : msg;        // append so same-tick finishes aren't lost
   clearTimeout(announceT); announceT=setTimeout(()=>{ el.textContent=""; },4000); }
-function toast(msg){ const c=document.getElementById("toasts"); if(!c) return;
-  const d=document.createElement("div"); d.className="toast"; d.dir="auto"; d.textContent=msg; c.appendChild(d);
+function toast(msg,opts){ opts=opts||{}; const c=document.getElementById("toasts"); if(!c) return;
+  const d=document.createElement("div"); d.className="toast"+(opts.selectable?" sel":""); d.dir="auto"; d.textContent=msg; c.appendChild(d);
   requestAnimationFrame(()=>d.classList.add("show"));
-  setTimeout(()=>{ d.classList.remove("show"); setTimeout(()=>d.remove(),300); },3200); }
+  const dur=opts.duration||3200;
+  let timer; const hide=()=>{ d.classList.remove("show"); setTimeout(()=>d.remove(),300); };
+  const arm=()=>{ clearTimeout(timer); timer=setTimeout(hide,dur); }; arm();
+  if(opts.selectable){   // pause the auto-dismiss while the user hovers to select/copy
+    d.addEventListener("mouseenter",()=>clearTimeout(timer));
+    d.addEventListener("mouseleave",arm); } }
 function setMuted(m){ muted=m; try{ localStorage.setItem("ct_muted",m?"1":"0"); }catch(e){}
   const b=document.getElementById("muteBtn"); if(!b) return;
   b.innerHTML=m?ICON.bellOff:ICON.bell; b.title=t(m?"unmute":"mute"); b.setAttribute("aria-label",t(m?"unmute":"mute")); }
@@ -1957,10 +2023,7 @@ function updateWS(e,a){ e.data=a;
   const fam=toolFamily(a.tool); e.root.dataset.fam=fam;
   e.root.style.setProperty("--row-fam", FAM_COLOR[fam]||"var(--ok)");
   e.refs.head.textContent=a.emoji;
-  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.dir="auto";
-  // Hover tooltip on the card title = the conversation's full working-directory path
-  // (falls back to the title when the path is unknown).
-  const pathTip=((a.path||a.cwd||a.project||"")+"").trim(); e.refs.name.title=pathTip||nm;
+  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.title=nm; e.refs.name.dir="auto";
   const actLbl=activityLabel(a); e.refs.act.textContent=actLbl; e.refs.act.parentElement.title=actLbl;
   e.refs.badge.textContent=badgeText(a);
   e.root.setAttribute("aria-label", nm+" — "+actLbl);
@@ -2037,9 +2100,9 @@ function render(payload){
 
   // per-room (per-project) stats from ALL agents (so a room can show ✓done even when hidden)
   const stat={};
-  for(const a of all){ const s=roomKey(a); const v=stat[s]||(stat[s]={running:0,stale:0,aborted:0,done:0,label:roomLabel(a),topic:"",sid:"",mtime:0,convs:0});
+  for(const a of all){ const s=roomKey(a); const v=stat[s]||(stat[s]={running:0,stale:0,aborted:0,done:0,label:roomLabel(a),path:"",topic:"",sid:"",mtime:0,convs:0});
     if(v[a.status]!==undefined) v[a.status]++; v.mtime=Math.max(v.mtime,a.mtime_ms||0); v.convs++;
-    if(!v.label) v.label=roomLabel(a); }
+    if(!v.label) v.label=roomLabel(a); if(!v.path) v.path=((a.path||a.project||a.cwd||"")+"").trim(); }
 
   const q=(searchQuery||"").toLowerCase().trim();
   const searched = q ? all.filter(a=>matchesSearch(a,q)) : all;
@@ -2073,7 +2136,7 @@ function render(payload){
     const rtHTML='<span class="rt-ico">'+ICON.building+'</span><span class="rt-name">'+esc(st.label)+'</span>'
       +'<small><span class="rc-pre">(</span>'+st.convs+'<span class="rc-word">'+(st.convs===1?' chat':' chats')+'</span><span class="rc-post">)</span></small>';
     if(r._rt!==rtHTML){ r.rt.innerHTML=rtHTML; r._rt=rtHTML; r._lbl=null; }
-    { const nm=r.rt.querySelector(".rt-name"); if(nm&&r._lbl!==st.label){ nm.dataset.full=st.label; midTruncate(nm); r._lbl=st.label; } }
+    { const nm=r.rt.querySelector(".rt-name"); if(nm){ if(r._lbl!==st.label){ nm.dataset.full=st.label; midTruncate(nm); r._lbl=st.label; } nm.title=st.path||st.label; } }
     const showing=roomShowsDone(s);
     const showingAb=roomShowsAborted(s);
     const abortBtn=st.aborted?('<button class="rdone rabort'+(showingAb?' on':'')+'" data-s="'+esc(s)+'" type="button" aria-pressed="'+(showingAb?'true':'false')+'" title="'+esc(t("toggleStopped"))+'">'+ICON.stop+st.aborted+'</button>'):'';
@@ -2193,7 +2256,11 @@ try{ const mq=window.matchMedia("(prefers-color-scheme: light)");
     if(!themeExplicit){ theme=e.matches?"light":"dark"; document.documentElement.setAttribute("data-theme",theme); applyThemeBtn(); } }); }catch(e){}
 document.getElementById("app").addEventListener("click",e=>{ if(e.target.closest(".btn-demo")) setDemo(true);
   const rd=e.target.closest(".rdone"); if(rd){ e.stopPropagation();
-    if(rd.classList.contains("rabort")) toggleRoomAborted(rd.dataset.s); else toggleRoomDone(rd.dataset.s); } });
+    if(rd.classList.contains("rabort")) toggleRoomAborted(rd.dataset.s); else toggleRoomDone(rd.dataset.s); return; }
+  // Click a room (Cursor instance) title -> reveal + copy its full folder path.
+  const rt=e.target.closest(".rt-name"); if(rt){ const p=(rt.title||rt.dataset.full||rt.textContent||"").trim();
+    if(p){ try{ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(p); }catch(_){}
+      toast(p,{selectable:true,duration:6000}); announce(p); } } });
 document.getElementById("hidden").addEventListener("click",e=>{ const c=e.target.closest(".hr-chip"); if(c) revealRoom(c.dataset.s); });
 document.getElementById("exitDemoBtn").addEventListener("click",()=>setDemo(false));
 document.getElementById("search").addEventListener("input",e=>{ searchQuery=e.target.value;
@@ -2316,8 +2383,12 @@ function fetchUsageHttp(force){ if(__CT_VS||demoMode) return;
 function requestUsageRefresh(force){ if(__CT_VS){ try{ __CT_VS.postMessage({type:"refreshUsage"}); }catch(_){} } else { fetchUsageHttp(force); } }
 (function wireUsage(){ const chip=document.getElementById("usageChip"), panel=document.getElementById("usagePanel");
   if(!chip||!panel) return;
-  chip.addEventListener("click",toggleUsage);
-  panel.addEventListener("click",function(e){ const r=e.target.closest&&e.target.closest("#usageRefreshBtn");
+  // stopPropagation: toggleUsage rebuilds the chip's innerHTML, detaching the
+  // clicked child; without this the same click bubbles to the document handler
+  // below, whose closest(".usagewrap") returns null for the detached target and
+  // wrongly closes the just-opened panel (the intermittent "won't open" bug).
+  chip.addEventListener("click",function(e){ e.stopPropagation(); toggleUsage(); });
+  panel.addEventListener("click",function(e){ e.stopPropagation(); const r=e.target.closest&&e.target.closest("#usageRefreshBtn");
     if(r) requestUsageRefresh(true); });
   document.addEventListener("click",function(e){ if(!usageOpen) return;
     const w=e.target.closest&&e.target.closest(".usagewrap"); if(!w){ usageOpen=false; renderUsage(); } });

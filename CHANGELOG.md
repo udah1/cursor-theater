@@ -6,6 +6,50 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-07-13
+
+### Changed
+
+- Header title now shows just **"Cursor"** in both English and Hebrew (previously
+  "Cursor Theater" / "משרד הסוכנים").
+
+## [0.1.10] - 2026-07-13
+
+### Changed
+
+- **Usage header chip** simplified to just the numbers — `used/limit` and on-demand
+  `$used/$limit` (the per-user cap) — with the inline progress bar removed.
+- **New persistent usage footer** below the agents list showing the same figures
+  *with* progress bars (requests + spend) over a full 100% track.
+- **Card-title tooltip** now shows the conversation's full working-directory path.
+
+## [0.1.9] - 2026-07-13
+
+### Fixed
+
+- **Actively-working chats no longer flap to "done" every second** (replaying the
+  finish confetti/chime). "Done" is detected from the transcript's last line being
+  an assistant message with no trailing tool call, which transiently looks finished
+  mid-turn (between tool calls). A "done" is now debounced: it's only trusted once
+  the conversation has been quiet (no transcript / `lastUpdatedAt` / checkpoint
+  write) for ~10s, so a chat still streaming reads "working" instead.
+
+## [0.1.8] - 2026-07-13
+
+### Added
+
+- **Cursor Usage panel**: a compact header chip shows your live included-request
+  usage (used/limit + a progress bar) and on-demand spend ($used). Click it to
+  expand a panel with the reset date and days left, a burn-rate projection,
+  on-demand spend vs. per-user cap, your plan, and a per-model cost/request
+  breakdown for the current billing cycle. English + Hebrew.
+- Authentication reuses Cursor's own locally-stored session token (no separate
+  login); the token is read on demand, never logged, persisted, or sent to the
+  webview. Refreshes when the agent status changes (throttled to once/minute) and
+  via a manual refresh button. Toggle with the `cursorTheater.showUsage` setting.
+- The standalone Python server exposes the same data at `/api/usage` (reusing the
+  local token), so the usage widget also works outside Cursor.
+
 ## [0.1.7] - 2026-06-15
 
 ### Changed

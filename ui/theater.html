@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cursor Theater</title>
+<title>Cursor</title>
 <script>try{var Q=(location.search.match(/[?&]lang=(he|en)\b/)||[])[1];
   var L=Q||localStorage.getItem("ct_lang")||"en";if(L!=="en"&&L!=="he")L="en";
   document.documentElement.lang=L; document.documentElement.dir=(L==="he")?"rtl":"ltr";
@@ -170,6 +170,68 @@
   .demo-chip button{ font:inherit; font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line);
                      color:var(--ink-2); border-radius:var(--r-pill); padding:3px 11px; cursor:pointer; }
   .demo-chip[hidden]{ display:none; }
+
+  /* ---- Cursor Usage widget (header chip + dropdown panel) ---- */
+  .usagewrap{ position:relative; display:inline-flex; }
+  .usagechip{ font:inherit; display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+              font-size:var(--fs-sm); color:var(--ink-2); font-weight:600;
+              background:var(--surface-hi); border:1px solid var(--line); border-radius:var(--r-pill);
+              padding:4px 11px; transition:background .15s,border-color .15s; white-space:nowrap; }
+  .usagechip:hover{ background:var(--surface-3); border-color:var(--line-strong,var(--line)); }
+  .usagechip[hidden]{ display:none; }
+  .usagechip .ic{ width:15px; height:15px; opacity:.85; flex:none; }
+  .usagechip .uc-req{ font-family:var(--mono); }
+  .usagechip .uc-bar{ width:44px; height:6px; border-radius:var(--r-pill); background:var(--surface-3);
+                      overflow:hidden; flex:none; }
+  .usagechip .uc-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .usagechip.warn .uc-bar i{ background:var(--idle); } .usagechip.over .uc-bar i{ background:var(--abort); }
+  .usagechip .uc-od{ font-family:var(--mono); color:var(--ink-dim); }
+  .usagechip.needsauth{ color:var(--accent); border-color:rgba(107,124,255,.45); background:rgba(107,124,255,.12); }
+  .usagechip.err{ color:var(--idle); }
+
+  .usagepanel{ position:absolute; inset-inline-end:0; top:calc(100% + 8px); z-index:70; width:min(340px,86vw);
+               background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+               box-shadow:0 12px 34px rgba(0,0,0,.28); padding:14px 15px; }
+  .usagepanel[hidden]{ display:none; }
+  .up-h{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+  .up-h .up-plan{ font-size:var(--fs-xs); font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+                  padding:2px 8px; border-radius:var(--r-pill); background:var(--accent-soft,rgba(107,124,255,.14)); color:var(--accent); }
+  .up-refresh{ font:inherit; background:none; border:1px solid var(--line); color:var(--ink-dim); cursor:pointer;
+               border-radius:var(--r-pill); width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; }
+  .up-refresh:hover{ color:var(--ink); border-color:var(--ink-dim); }
+  .up-refresh .ic{ width:14px; height:14px; }
+  .up-sec{ margin:10px 0; }
+  .up-lbl{ font-size:var(--fs-xs); color:var(--ink-dim); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+  .up-val{ font-size:var(--fs-md); color:var(--ink); font-weight:650; }
+  .up-val small{ font-weight:500; color:var(--ink-dim); }
+  .up-bar{ height:8px; border-radius:var(--r-pill); background:var(--surface-3); overflow:hidden; margin:6px 0 4px; }
+  .up-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .up-bar.warn i{ background:var(--idle); } .up-bar.over i{ background:var(--abort); }
+  .up-meta{ font-size:var(--fs-sm); color:var(--ink-dim); }
+  .up-burn{ font-size:var(--fs-sm); color:var(--ink-dim); margin-top:6px; }
+  .up-burn.over{ color:var(--abort); }
+  .up-models{ margin-top:10px; border-top:1px solid var(--line-soft); padding-top:8px; }
+  .up-models table{ width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
+  .up-models th{ text-align:start; color:var(--ink-dim); font-weight:600; padding:2px 4px; }
+  .up-models td{ padding:2px 4px; color:var(--ink-2); font-family:var(--mono); }
+  .up-models td.m{ font-family:inherit; overflow:hidden; text-overflow:ellipsis; max-width:150px; white-space:nowrap; }
+  .up-foot{ margin-top:10px; font-size:var(--fs-xs); color:var(--ink-dimmer,var(--ink-dim)); }
+  .up-note{ font-size:var(--fs-sm); color:var(--ink-dim); }
+  html[dir="rtl"] .usagepanel{ inset-inline-end:auto; inset-inline-start:0; }
+
+  /* Persistent usage footer, below the agents list. Mirrors the chip numbers but
+     with progress bars that carry a full-width 100% track (like the modal bars). */
+  .usagefooter{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 22px;
+                margin:6px 14px 20px; padding:11px 15px;
+                background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); }
+  .usagefooter[hidden]{ display:none; }
+  .uf-item{ display:flex; align-items:center; gap:9px; flex:1 1 220px; min-width:200px; }
+  .uf-lbl{ font-size:var(--fs-xs); color:var(--ink-dim); text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; }
+  .uf-num{ font-family:var(--mono); font-size:var(--fs-sm); color:var(--ink); font-weight:650; white-space:nowrap; }
+  .uf-bar{ flex:1 1 auto; height:8px; min-width:60px; border-radius:var(--r-pill);
+           background:var(--surface-3); overflow:hidden; }
+  .uf-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .uf-bar.warn i{ background:var(--idle); } .uf-bar.over i{ background:var(--abort); }
   /* Embedded (Cursor webview): no demo data source, so hide its affordances. */
   html.embedded .btn-demo, html.embedded #demoChip{ display:none !important; }
 
@@ -450,10 +512,14 @@
 </head>
 <body>
 <header>
-  <h1 id="h1">Cursor Theater</h1>
+  <h1 id="h1">Cursor</h1>
   <div class="counts" id="counts"></div>
   <span id="livestat" class="livestat boot"><i class="livedot" aria-hidden="true"></i><span id="liveago"></span></span>
   <span id="demoChip" class="demo-chip" hidden>▶ <span id="demoChipLbl">Demo</span> <button id="exitDemoBtn" type="button">Exit</button></span>
+  <div class="usagewrap">
+    <button id="usageChip" class="usagechip" type="button" hidden aria-expanded="false" aria-controls="usagePanel"></button>
+    <div id="usagePanel" class="usagepanel" role="region" hidden></div>
+  </div>
   <div class="spacer"></div>
   <button id="hToggle" class="iconbtn htoggle" type="button" aria-expanded="false" aria-controls="htools" aria-label="Tools"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
   <div class="tools" id="htools">
@@ -466,6 +532,7 @@
 </header>
 <div id="reconnect" class="reconnect" role="status" hidden></div>
 <div id="app"><div class="boot" data-boot="1"></div></div>
+<div id="usageFooter" class="usagefooter" hidden></div>
 <div id="hidden" class="hiddenrooms" hidden></div>
 <div id="legend" class="legend" hidden></div>
 <div id="diag" class="diag" hidden></div>
@@ -532,7 +599,7 @@ const PERSONAS_HE=["הבלש","הסופר","השליח","החוקר","הספרן
 const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",MultiEdit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",SlashCommand:"⌨️ Slash command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
 const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",MultiEdit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",SlashCommand:"⌨️ פקודת סלאש",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
 const I18N={
-  en:{ appTitle:"Cursor Theater", docTitle:"Cursor Theater", showDone:"Show done/stopped", toggleFinished:"Show/hide finished in this conversation", toggleStopped:"Show/hide stopped in this conversation", switchTo:"עברית",
+  en:{ appTitle:"Cursor", docTitle:"Cursor", showDone:"Show done/stopped", toggleFinished:"Show/hide finished in this conversation", toggleStopped:"Show/hide stopped in this conversation", switchTo:"עברית",
        emptyOffice:"The office is empty",
        emptySub:"Start an agent conversation in Cursor — or see what a busy office looks like:",
        emptySubEmbedded:"Start an agent conversation in Cursor — it'll appear here as it works.",
@@ -558,8 +625,20 @@ const I18N={
        taskUnavailable:"working — details unavailable",
        actDone:"✅ Done", actStale:"💤 Idle", actAborted:"⏹ Stopped", actThinking:"🤔 Thinking", actMcp:"🔌 MCP tool",
        legAborted:"stopped",
+       usageTitle:"Cursor usage", usageConnect:"Connect usage", usageUnavailable:"Usage n/a",
+       usageSignin:"Sign in to Cursor to see your usage here.",
+       usageIncluded:"Included requests", usageOnDemand:"On-demand spend",
+       usageRemaining:function(n){ return n+" left"; },
+       usageResets:function(d,days){ return "Resets "+d+" · "+days+"d left"; },
+       usageBurn:function(perDay,proj){ return perDay+"/day → ~"+proj+" by reset"; },
+       usageOverProj:"on track to exceed the included limit",
+       usageModels:"By model · this cycle", usageRefresh:"Refresh now",
+       usageUpdated:function(s){ return "updated "+(s<60?(s+"s ago"):(Math.floor(s/60)+"m ago")); },
+       usageCap:function(v){ return "per-user cap "+v; },
+       usageColModel:"model", usageColCost:"cost", usageColReq:"req",
+       usageReqLabel:"Requests", usageSpendLabel:"Spend",
        personas:PERSONAS_EN, tools:TOOLS_EN },
-  he:{ appTitle:"משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו/נעצרו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", toggleStopped:"הצג/הסתר שנעצרו בשיחה זו", switchTo:"English",
+  he:{ appTitle:"Cursor", docTitle:"Cursor", showDone:"הצג שהושלמו/נעצרו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", toggleStopped:"הצג/הסתר שנעצרו בשיחה זו", switchTo:"English",
        emptyOffice:"המשרד ריק",
        emptySub:"הפעילו שיחת סוכן ב-Cursor - או הציצו איך נראה משרד עמוס:",
        emptySubEmbedded:"הפעילו שיחת סוכן ב-Cursor - היא תופיע כאן בזמן העבודה.",
@@ -585,6 +664,18 @@ const I18N={
        taskUnavailable:"עובד — פרטים לא זמינים",
        actDone:"✅ סיים", actStale:"💤 ממתין", actAborted:"⏹ נעצר", actThinking:"🤔 חושב", actMcp:"🔌 כלי MCP",
        legAborted:"נעצר",
+       usageTitle:"שימוש ב-Cursor", usageConnect:"חיבור שימוש", usageUnavailable:"שימוש לא זמין",
+       usageSignin:"התחברו ל-Cursor כדי לראות כאן את השימוש שלכם.",
+       usageIncluded:"בקשות כלולות", usageOnDemand:"הוצאה לפי דרישה",
+       usageRemaining:function(n){ return "נותרו "+n; },
+       usageResets:function(d,days){ return "מתאפס "+d+" · עוד "+days+" ימים"; },
+       usageBurn:function(perDay,proj){ return perDay+"/יום ← ~"+proj+" עד האיפוס"; },
+       usageOverProj:"בקצב הנוכחי הכמות הכלולה תיחרג",
+       usageModels:"לפי מודל · מחזור נוכחי", usageRefresh:"רענון עכשיו",
+       usageUpdated:function(s){ return "עודכן "+(s<60?("לפני "+s+" שנ׳"):("לפני "+Math.floor(s/60)+" דק׳")); },
+       usageCap:function(v){ return "תקרה למשתמש "+v; },
+       usageColModel:"מודל", usageColCost:"עלות", usageColReq:"בקשות",
+       usageReqLabel:"בקשות", usageSpendLabel:"הוצאה",
        personas:PERSONAS_HE, tools:TOOLS_HE }
 };
 let lang=(function(){ try{ var Q=(location.search.match(/[?&]lang=(he|en)\b/)||[])[1]; if(Q) return Q;
@@ -618,6 +709,7 @@ function applyLang(){ const el=document.documentElement; el.lang=lang; el.dir=(l
   document.title=t("docTitle");
   const boot=document.querySelector('#app .boot[data-boot]'); if(boot) boot.innerHTML=skeletonHTML();
   renderLegend();
+  if(typeof renderUsage==="function") renderUsage();
   if(lastLiveMs) tickLive();
   // The drawer is the one surface render() may not refresh (an open 'done' agent
   // can be filtered out of the floor), so re-translate it directly from cached data.
@@ -639,7 +731,9 @@ const ICON={
   sun:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6M18.4 18.4l-1.6-1.6M7.2 7.2 5.6 5.6"/></svg>',
   moon:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.8 6.8 0 0 0 9.8 9.8z"/></svg>',
   bell:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/></svg>',
-  bellOff:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/><path d="M3.2 2.5 21.5 20.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+  bellOff:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/><path d="M3.2 2.5 21.5 20.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  gauge:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 19l4-5"/></svg>',
+  refresh:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 4"/><path d="M20 4v5h-5"/></svg>'
 };
 let booted=false;            // becomes true after the first successful scan
 function skeletonHTML(){ const rows=n=>Array(n).fill('<div class="sk-row shimmer"></div>').join("");
@@ -727,7 +821,10 @@ function updateWS(e,a){ e.data=a;
   const fam=toolFamily(a.tool); e.root.dataset.fam=fam;
   e.root.style.setProperty("--row-fam", FAM_COLOR[fam]||"var(--ok)");
   e.refs.head.textContent=a.emoji;
-  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.title=nm; e.refs.name.dir="auto";
+  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.dir="auto";
+  // Hover tooltip on the card title = the conversation's full working-directory path
+  // (falls back to the title when the path is unknown).
+  const pathTip=((a.path||a.cwd||a.project||"")+"").trim(); e.refs.name.title=pathTip||nm;
   const actLbl=activityLabel(a); e.refs.act.textContent=actLbl; e.refs.act.parentElement.title=actLbl;
   e.refs.badge.textContent=badgeText(a);
   e.root.setAttribute("aria-label", nm+" — "+actLbl);
@@ -1007,6 +1104,88 @@ let __rtz; window.addEventListener("resize",function(){ clearTimeout(__rtz); __r
 let polling=false, failStreak=0;
 function setConnected(ok){ connected=ok; const el=document.getElementById("reconnect");
   el.hidden=ok; if(!ok) el.textContent=t("reconnecting"); tickLive(); }
+
+// ---- Cursor Usage widget: header chip + expandable details panel ----
+// The extension host does all auth/network; the webview only renders the parsed
+// numbers it receives via {type:"usage"} (no token ever reaches this code).
+let usageData=null, usageOpen=false;
+function usageMoney(n){ if(n==null||isNaN(n)) return "$0"; const r=Math.round(n*100)/100;
+  return "$"+(Number.isInteger(r)?String(r):r.toFixed(2)); }
+function usageDate(ms){ if(!ms) return ""; try{ return new Date(ms).toLocaleDateString(lang==="he"?"he-IL":undefined,{month:"short",day:"numeric"}); }catch(e){ return ""; } }
+function usageBarClass(pct){ return pct>=100?"over":(pct>=80?"warn":""); }
+function usageFoot(u){ const s=Math.max(0,Math.round((Date.now()-(u.fetchedAtMs||Date.now()))/1000));
+  return '<div class="up-foot">'+esc(u.email||"")+(u.email?" · ":"")+esc(I18N[lang].usageUpdated(s))+'</div>'; }
+function renderUsagePanel(){ const panel=document.getElementById("usagePanel"); if(!panel) return;
+  const u=usageData; if(!u){ panel.innerHTML=""; return; } const L=I18N[lang];
+  const head='<div class="up-h"><span class="up-plan">'+esc(u.plan||"cursor")+'</span>'
+    +'<button class="up-refresh" id="usageRefreshBtn" type="button" title="'+esc(t("usageRefresh"))+'" aria-label="'+esc(t("usageRefresh"))+'">'+ICON.refresh+'</button></div>';
+  if(u.state==="needsAuth"){ panel.innerHTML=head+'<div class="up-note">'+esc(t("usageSignin"))+'</div>'; return; }
+  if(u.state==="error"){ panel.innerHTML=head+'<div class="up-note">'+esc(t("usageUnavailable"))+(u.error?(" · "+esc(u.error)):"")+'</div>'+usageFoot(u); return; }
+  const pct=Math.max(0,Math.min(100,u.pct||0));
+  const burn=(u.requestsPerDay!=null&&u.projectedRequests!=null)
+    ? '<div class="up-burn'+(u.projectedToExceed?" over":"")+'">'+esc(L.usageBurn(u.requestsPerDay,u.projectedRequests))+(u.projectedToExceed?(" · "+esc(t("usageOverProj"))):"")+'</div>' : "";
+  const inc='<div class="up-sec"><div class="up-lbl">'+esc(t("usageIncluded"))+'</div>'
+    +'<div class="up-val">'+esc(u.used)+' / '+esc(u.limit)+' <small>('+esc(u.pct)+'%)</small></div>'
+    +'<div class="up-bar '+usageBarClass(u.pct||0)+'"><i style="width:'+pct+'%"></i></div>'
+    +'<div class="up-meta">'+esc(L.usageRemaining(u.remaining))
+    +(u.cycleEndMs?(" · "+esc(L.usageResets(usageDate(u.cycleEndMs), u.daysLeft==null?0:u.daysLeft))):"")+'</div>'+burn+'</div>';
+  const od='<div class="up-sec"><div class="up-lbl">'+esc(t("usageOnDemand"))+'</div>'
+    +'<div class="up-val">'+esc(usageMoney(u.onDemandUsed))+' <small>/ '+esc(usageMoney(u.onDemandLimit))+'</small></div>'
+    +(u.hardLimitPerUser!=null?('<div class="up-meta">'+esc(L.usageCap(usageMoney(u.hardLimitPerUser)))+'</div>'):"")+'</div>';
+  let models="";
+  if(u.perModel&&u.perModel.length){
+    const rows=u.perModel.slice().sort(function(a,b){ return (b.costCents||0)-(a.costCents||0); }).map(function(m){
+      return '<tr><td class="m" title="'+esc(m.model)+'">'+esc(m.model)+'</td><td>'+esc(usageMoney((m.costCents||0)/100))+'</td><td>'+esc(m.requests||0)+'</td></tr>'; }).join("");
+    models='<div class="up-models"><div class="up-lbl">'+esc(t("usageModels"))+'</div>'
+      +'<table><thead><tr><th>'+esc(t("usageColModel"))+'</th><th>'+esc(t("usageColCost"))+'</th><th>'+esc(t("usageColReq"))+'</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+  panel.innerHTML=head+inc+od+models+usageFoot(u);
+}
+function renderUsageFooter(){ const f=document.getElementById("usageFooter"); if(!f) return;
+  const u=usageData;
+  if(!u||u.state!=="ok"){ f.hidden=true; f.innerHTML=""; return; }
+  const reqPct=Math.max(0,Math.min(100,u.pct||0));
+  const odLimit=u.onDemandLimit||0, odPct=odLimit>0?Math.max(0,Math.min(100,(u.onDemandUsed/odLimit)*100)):0;
+  f.hidden=false;
+  f.innerHTML=
+    '<div class="uf-item"><span class="uf-lbl">'+esc(t("usageReqLabel"))+'</span>'
+      +'<span class="uf-num">'+esc(u.used)+'/'+esc(u.limit)+'</span>'
+      +'<span class="uf-bar '+usageBarClass(u.pct||0)+'"><i style="width:'+reqPct+'%"></i></span></div>'
+    +'<div class="uf-item"><span class="uf-lbl">'+esc(t("usageSpendLabel"))+'</span>'
+      +'<span class="uf-num">'+esc(usageMoney(u.onDemandUsed))+'/'+esc(usageMoney(u.onDemandLimit))+'</span>'
+      +'<span class="uf-bar '+usageBarClass(odPct)+'"><i style="width:'+odPct+'%"></i></span></div>';
+}
+function renderUsage(d){ if(d) usageData=d;
+  const chip=document.getElementById("usageChip"), panel=document.getElementById("usagePanel");
+  if(!chip||!panel) return; const u=usageData;
+  if(!u){ chip.hidden=true; panel.hidden=true; renderUsageFooter(); return; }
+  chip.hidden=false; chip.title=t("usageTitle");
+  if(u.state==="needsAuth"){ chip.className="usagechip needsauth"; chip.innerHTML=ICON.gauge+'<span>'+esc(t("usageConnect"))+'</span>'; }
+  else if(u.state==="error"){ chip.className="usagechip err"; chip.innerHTML=ICON.gauge+'<span>'+esc(t("usageUnavailable"))+'</span>'; }
+  else { chip.className="usagechip";
+    chip.innerHTML=ICON.gauge+'<span class="uc-req">'+esc(u.used)+'/'+esc(u.limit)+'</span>'
+      +'<span class="uc-od">'+esc(usageMoney(u.onDemandUsed))+'/'+esc(usageMoney(u.onDemandLimit))+'</span>'; }
+  renderUsagePanel(); renderUsageFooter(); panel.hidden=!usageOpen; chip.setAttribute("aria-expanded", usageOpen?"true":"false");
+}
+function toggleUsage(){ usageOpen=!usageOpen; renderUsage(); }
+// Standalone (Python server) usage: the browser can't reach cursor.com (CSP +
+// no cookie), so the server reuses the local token and exposes /api/usage. The
+// embedded webview instead receives usage via postMessage from the extension host.
+let usageHttpTimer=null;
+function fetchUsageHttp(force){ if(__CT_VS||demoMode) return;
+  fetch(API_BASE+"/api/usage"+(force?"?force=1":""),{cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderUsage(d); })
+    .catch(function(e){ renderUsage({state:"error",error:String(e),fetchedAtMs:Date.now()}); }); }
+function requestUsageRefresh(force){ if(__CT_VS){ try{ __CT_VS.postMessage({type:"refreshUsage"}); }catch(_){} } else { fetchUsageHttp(force); } }
+(function wireUsage(){ const chip=document.getElementById("usageChip"), panel=document.getElementById("usagePanel");
+  if(!chip||!panel) return;
+  chip.addEventListener("click",toggleUsage);
+  panel.addEventListener("click",function(e){ const r=e.target.closest&&e.target.closest("#usageRefreshBtn");
+    if(r) requestUsageRefresh(true); });
+  document.addEventListener("click",function(e){ if(!usageOpen) return;
+    const w=e.target.closest&&e.target.closest(".usagewrap"); if(!w){ usageOpen=false; renderUsage(); } });
+})();
 // Data source adapter. Two front ends share this exact UI:
 //  * Cursor/VS Code extension webview -> the extension host reads the journals
 //    and PUSHES payloads via postMessage (no HTTP server, no port).
@@ -1031,7 +1210,8 @@ async function poll(){ if(__CT_VS) return;           // webview is push-driven; 
 applyLang();
 if(__CT_VS){
   window.addEventListener("message",function(ev){ const d=ev.data||{};
-    if(d&&d.type==="agents"){ booted=true; lastLiveMs=Date.now(); render(d.payload); failStreak=0; setConnected(true); } });
+    if(d&&d.type==="agents"){ booted=true; lastLiveMs=Date.now(); render(d.payload); failStreak=0; setConnected(true); }
+    else if(d&&d.type==="usage"){ renderUsage(d.data); } });
   var requestScan=function(){ try{ __CT_VS.postMessage({type:"ready"}); }catch(e){} };
   requestScan();                            // ask the host for the first scan
   // Safety nets so a docked side view never stays blank: re-request if the first
@@ -1040,7 +1220,9 @@ if(__CT_VS){
   setTimeout(function(){ if(!booted) requestScan(); }, 1500);
   document.addEventListener("visibilitychange",function(){ if(!document.hidden) requestScan(); });
   window.addEventListener("focus",requestScan);
-} else { poll(); setInterval(poll,POLL_MS); }
+} else { poll(); setInterval(poll,POLL_MS);
+  // Standalone: pull Cursor usage from the local server (skipped in demo mode).
+  if(!demoMode){ fetchUsageHttp(); usageHttpTimer=setInterval(function(){ fetchUsageHttp(); },60000); } }
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});
 </script>

@@ -21,11 +21,15 @@ import os
 import sys
 import glob
 import time
+import math
+import base64
+import threading
 import datetime
 import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, parse_qs
-from urllib.request import pathname2url
+from urllib.parse import urlsplit, parse_qs, quote
+from urllib.request import pathname2url, Request, urlopen
+from urllib.error import HTTPError
 
 __version__ = "0.1.5"
 
@@ -56,6 +60,13 @@ RUNNING_STALE_SEC = 360    # 6 min of total silence before a chat reads as idle
 # "aborted" from being wrongly flipped to idle, while a truly stopped agent (whose
 # checkpoint freezes instantly) drops out of "working" in ~90s instead of ~6 min.
 ABORTED_IDLE_SEC = 90
+# Cursor exposes no "generating right now" flag, so we detect "done" from the
+# transcript's last line being an assistant message with no trailing tool call.
+# Mid-turn (between tool calls) the last line transiently looks finished, which
+# made an actively-working chat flap running<->done every scan (replaying the
+# finish confetti/chime). We debounce: only trust "done" once the conversation
+# has been QUIET (no transcript / lastUpdatedAt / checkpoint write) this long.
+DONE_DEBOUNCE_SEC = 10
 
 PROJECTS_DIR = os.path.join(os.path.expanduser("~"), ".cursor", "projects")
 
@@ -125,6 +136,225 @@ def composer_meta(composer_id):
         meta = {}
     _COMPOSER_CACHE[composer_id] = (db_mtime, meta)
     return meta
+
+
+# ---------------------------------------------------------------------------
+# Cursor Usage (cursor.com dashboard numbers), mirroring extension/src/usage.ts.
+#
+# Reuses the session token Cursor already stores locally (no separate login):
+# the cookie WorkosCursorSessionToken=<userSub>::<accessToken> where accessToken
+# is the JWT at ItemTable key `cursorAuth/accessToken` and userSub is that JWT's
+# `sub` claim (leading "auth0|" stripped). We read it READ-ONLY, build the cookie
+# on demand, and NEVER log or persist it. These are undocumented internal
+# endpoints (the same ones cursor.com/dashboard calls); they can change anytime.
+# ---------------------------------------------------------------------------
+_USAGE_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+_USAGE_TIMEOUT = 8
+_USAGE_TTL_SEC = 60          # cache so page polls never hammer cursor.com
+_USAGE_CACHE = {"ts": 0.0, "data": None}
+_USAGE_LOCK = threading.Lock()
+
+
+def _jwt_sub(jwt):
+    """The `sub` claim of a JWT, with the leading 'auth0|' stripped; None on error."""
+    try:
+        part = jwt.split(".")[1]
+        part += "=" * ((4 - len(part) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(part.encode()))
+        sub = payload.get("sub")
+        if not sub:
+            return None
+        return sub[len("auth0|"):] if sub.startswith("auth0|") else sub
+    except Exception:
+        return None
+
+
+def _read_cursor_auth():
+    """Cursor's stored session token + team/plan/email from the global DB (read-only).
+    Returns a dict with cookie/sub/teamId/plan/email, or None if not signed in."""
+    try:
+        uri = "file:" + pathname2url(CURSOR_DB) + "?mode=ro&immutable=1"
+        con = sqlite3.connect(uri, uri=True, timeout=1.0)
+        try:
+            rows = con.execute(
+                "SELECT key,value FROM ItemTable WHERE key IN (?,?,?,?)",
+                ("cursorAuth/accessToken", "cursorAuth/cachedTeam",
+                 "cursorAuth/stripeMembershipType", "cursorAuth/cachedEmail"),
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:
+        return None
+    m = {k: v for (k, v) in rows}
+    access = m.get("cursorAuth/accessToken")
+    if not access:
+        return None
+    sub = _jwt_sub(access)
+    if not sub:
+        return None
+    team_id = None
+    try:
+        team_id = json.loads(m.get("cursorAuth/cachedTeam") or "{}").get("teamId")
+    except Exception:
+        team_id = None
+    cookie = "WorkosCursorSessionToken=" + quote(sub + "::" + access, safe="")
+    return {
+        "cookie": cookie,
+        "sub": sub,
+        "teamId": team_id,
+        "plan": (m.get("cursorAuth/stripeMembershipType") or "").strip(),
+        "email": (m.get("cursorAuth/cachedEmail") or "").strip(),
+    }
+
+
+def _cursor_api(method, path, cookie, body=None):
+    """One authenticated cursor.com dashboard call. Raises HTTPError on 401/403."""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = Request("https://cursor.com" + path, data=data, method=method)
+    req.add_header("Cookie", cookie)
+    req.add_header("Accept", "application/json")
+    req.add_header("Referer", "https://cursor.com/dashboard")
+    req.add_header("Origin", "https://cursor.com")
+    req.add_header("User-Agent", _USAGE_UA)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    with urlopen(req, timeout=_USAGE_TIMEOUT) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _num(v):
+    try:
+        f = float(v)
+        return f if f == f else 0  # reject NaN
+    except (TypeError, ValueError):
+        return 0
+
+
+def compute_usage():
+    """Fetch + parse the current user's Cursor usage. Never raises: returns a dict
+    with state 'ok' | 'needsAuth' | 'error' (same shape as extension UsageData)."""
+    now_ms = int(time.time() * 1000)
+    auth = _read_cursor_auth()
+    if not auth:
+        return {"state": "needsAuth", "fetchedAtMs": now_ms}
+    try:
+        me = _cursor_api("GET", "/api/auth/me", auth["cookie"])
+        sub = me.get("sub") or auth["sub"]
+        email = me.get("email") or auth["email"]
+        usage = _cursor_api("GET", "/api/usage?user=" + quote(sub, safe=""), auth["cookie"])
+        summary = _cursor_api("GET", "/api/usage-summary", auth["cookie"])
+    except HTTPError as e:
+        if e.code in (401, 403):
+            return {"state": "needsAuth", "fetchedAtMs": now_ms}
+        return {"state": "error", "error": "http %s" % e.code, "fetchedAtMs": now_ms}
+    except Exception as e:
+        return {"state": "error", "error": type(e).__name__, "fetchedAtMs": now_ms}
+
+    legacy = (usage or {}).get("gpt-4") or {}
+    is_team = summary.get("limitType") == "team"
+    plan_used_cents = _num((summary.get("individualUsage") or {}).get("plan", {}).get("used"))
+
+    request_quota = None
+    hard_limit = None
+    per_model = []
+    total_cost_cents = None
+    if is_team and auth["teamId"] is not None:
+        tid = auth["teamId"]
+        try:
+            teams = _cursor_api("POST", "/api/dashboard/teams", auth["cookie"], {"activeOnly": False})
+            for tm in (teams.get("teams") or []):
+                if tm.get("id") == tid and isinstance(tm.get("requestQuotaPerSeat"), (int, float)):
+                    request_quota = tm["requestQuotaPerSeat"]
+                    break
+        except Exception:
+            pass
+        try:
+            hl = _cursor_api("POST", "/api/dashboard/get-hard-limit", auth["cookie"], {"teamId": tid})
+            if isinstance(hl.get("hardLimitPerUser"), (int, float)):
+                hard_limit = hl["hardLimitPerUser"]
+        except Exception:
+            pass
+        try:
+            agg = _cursor_api("POST", "/api/dashboard/get-aggregated-usage-events",
+                              auth["cookie"], {"teamId": tid})
+            for a in (agg.get("aggregations") or []):
+                per_model.append({
+                    "model": str(a.get("modelIntent") or ""),
+                    "costCents": _num(a.get("totalCents")),
+                    "requests": _num(a.get("requestCost")),
+                    "inputTokens": _num(a.get("inputTokens")),
+                    "outputTokens": _num(a.get("outputTokens")),
+                    "cacheReadTokens": _num(a.get("cacheReadTokens")),
+                    "cacheWriteTokens": _num(a.get("cacheWriteTokens")),
+                })
+            total_cost_cents = _num(agg.get("totalCostCents"))
+        except Exception:
+            pass
+
+    # Included-request usage (dashboard legacy-request logic).
+    used_from_spend = math.ceil(plan_used_cents / 4) if plan_used_cents > 0 else None
+    used = int(used_from_spend if (is_team and used_from_spend is not None) else _num(legacy.get("numRequests")))
+    limit = int(500 * request_quota if (is_team and request_quota is not None) else _num(legacy.get("maxRequestUsage")))
+    remaining = max(0, limit - used)
+    pct = round((used / limit) * 1000) / 10 if limit > 0 else 0
+
+    on_demand = (summary.get("individualUsage") or {}).get("onDemand") or {}
+    on_demand_used = _num(on_demand.get("used")) / 100.0
+    on_demand_limit = _num(on_demand.get("limit")) / 100.0
+    on_demand_remaining = _num(on_demand.get("remaining")) / 100.0
+
+    cycle_start = iso_to_ms(summary.get("billingCycleStart"))
+    cycle_end = iso_to_ms(summary.get("billingCycleEnd"))
+    days_left = None
+    per_day = None
+    projected = None
+    projected_over = False
+    if cycle_start and cycle_end:
+        day_ms = 86400000.0
+        days_elapsed = (now_ms - cycle_start) / day_ms
+        days_left = max(0, (cycle_end - now_ms) / day_ms)
+        cycle_len = (cycle_end - cycle_start) / day_ms
+        per_day = used / max(0.5, days_elapsed)
+        projected = round(per_day * cycle_len)
+        projected_over = limit > 0 and projected > limit
+
+    plan_pct = (summary.get("individualUsage") or {}).get("plan", {}).get("totalPercentUsed")
+    return {
+        "state": "ok",
+        "fetchedAtMs": now_ms,
+        "email": email,
+        "plan": summary.get("membershipType") or auth["plan"],
+        "isTeam": is_team,
+        "used": used, "limit": limit, "remaining": remaining, "pct": pct,
+        "planPercentUsed": plan_pct if isinstance(plan_pct, (int, float)) else None,
+        "onDemandUsed": on_demand_used,
+        "onDemandLimit": on_demand_limit,
+        "onDemandRemaining": on_demand_remaining,
+        "hardLimitPerUser": hard_limit,
+        "cycleStartMs": cycle_start, "cycleEndMs": cycle_end,
+        "daysLeft": int(days_left) if days_left is not None else None,
+        "requestsPerDay": round(per_day * 10) / 10 if per_day is not None else None,
+        "projectedRequests": projected,
+        "projectedToExceed": projected_over,
+        "perModel": per_model,
+        "totalCostCents": total_cost_cents,
+    }
+
+
+def usage_payload(force=False):
+    """Cached usage (TTL _USAGE_TTL_SEC) so repeated page polls don't hammer the API."""
+    now = time.time()
+    with _USAGE_LOCK:
+        cached = _USAGE_CACHE["data"]
+        if not force and cached is not None and (now - _USAGE_CACHE["ts"]) < _USAGE_TTL_SEC:
+            return cached
+    data = compute_usage()
+    with _USAGE_LOCK:
+        _USAGE_CACHE["ts"] = time.time()
+        _USAGE_CACHE["data"] = data
+    return data
+
 
 # Persona emojis, index-aligned with the client-side name tables (PERSONAS_EN /
 # PERSONAS_HE in PAGE). The server emits a persona_id; the browser localizes the
@@ -460,6 +690,25 @@ def project_label(path):
     return label
 
 
+_PATH_CACHE = {}  # encoded folder name -> resolved absolute project path
+
+
+def project_path(transcript_path):
+    """The conversation's real absolute working directory (for the card tooltip),
+    reconstructed from the encoded project folder. Falls back to the encoded name
+    when the real dir can't be resolved (e.g. the project moved). Cached by enc."""
+    parts = transcript_path.replace("\\", "/").split("/")
+    try:
+        enc = parts[parts.index("agent-transcripts") - 1]
+    except ValueError:
+        return ""
+    if enc in _PATH_CACHE:
+        return _PATH_CACHE[enc]
+    real = _decode_project_dir(enc) or ""
+    _PATH_CACHE[enc] = real
+    return real
+
+
 def session_summary(session_file):
     """A conversation's subject (its first user message, cleaned of Cursor's tag
     wrappers) and a room label derived from the project folder. Cached by mtime;
@@ -559,11 +808,17 @@ def scan_sessions(now):
             and checkpoint_ms
             and (now - checkpoint_ms / 1000.0) > ABORTED_IDLE_SEC
         )
-        if is_done and not is_generating:
+        # Freshest "is it still doing work right now?" signal. The checkpoint
+        # advances every few seconds mid-turn even when the transcript mtime and
+        # lastUpdatedAt lag, so include it: a chat touched within DONE_DEBOUNCE_SEC
+        # is still generating and must NOT be declared done (kills the flapping).
+        freshest_ms = max(last_activity_ms, checkpoint_ms)
+        recently_active = freshest_ms and (now - freshest_ms / 1000.0) < DONE_DEBOUNCE_SEC
+        if is_done and not is_generating and not recently_active:
             status = "done"
         elif aborted_idle:
             status = "aborted"   # user manually stopped it (distinct from naturally idle)
-        elif is_generating or (now - last_activity_ms / 1000.0) <= RUNNING_STALE_SEC:
+        elif is_generating or recently_active or (now - last_activity_ms / 1000.0) <= RUNNING_STALE_SEC:
             status = "running"
         else:
             status = "stale"
@@ -578,7 +833,8 @@ def scan_sessions(now):
             "result": result if is_done else None,
             "start_ms": start_ms, "end_ms": end_ms if is_done else None,
             "session": uuid[:8], "session_full": uuid,
-            "cwd": cwd, "project": cwd, "mtime_ms": mtime_ms,
+            "cwd": cwd, "project": cwd, "path": project_path(path) or cwd,
+            "mtime_ms": mtime_ms,
             "is_session": True,
         })
     return entries
@@ -675,14 +931,18 @@ def scan_agents():
                 "start_ms": start_ms, "end_ms": end_ms,
                 "session": session[:8], "session_full": session,
                 "cwd": first_ev.raw.get("cwd", ""), "project": project,
+                "path": first_ev.raw.get("cwd", "") or project,
                 "mtime_ms": int(mtime * 1000), "is_session": False,
             }
             _AGENT_CACHE[path] = (mtime, size, adict, is_done, fvers, fskip)
 
         versions |= fvers
         skipped += fskip
-        # status tracks wall-clock `now`, so recompute it on every scan (even a cache hit)
-        if is_done:
+        # status tracks wall-clock `now`, so recompute it on every scan (even a cache hit).
+        # Debounce "done" the same way as top-level chats: a subagent whose file was
+        # written within DONE_DEBOUNCE_SEC is mid-turn (its last line only transiently
+        # looks finished between tool calls), so keep it "running" until it goes quiet.
+        if is_done and (now - mtime) > DONE_DEBOUNCE_SEC:
             status = "done"
         elif (now - mtime) > RUNNING_STALE_SEC:
             status = "stale"
@@ -739,7 +999,7 @@ def _demo_agent(aid, session, cwd, status, tool, task, role="", subagent_type=""
         "start_ms": int((now - start_offset) * 1000),
         "end_ms": int((now - 2) * 1000) if status == "done" else None,
         "session": session[:8], "session_full": session,
-        "cwd": cwd, "project": cwd, "mtime_ms": int((now - mtime_offset) * 1000),
+        "cwd": cwd, "project": cwd, "path": cwd, "mtime_ms": int((now - mtime_offset) * 1000),
         "is_session": is_session,
     }
 
@@ -879,7 +1139,7 @@ PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cursor Theater</title>
+<title>Cursor</title>
 <script>try{var Q=(location.search.match(/[?&]lang=(he|en)\\b/)||[])[1];
   var L=Q||localStorage.getItem("ct_lang")||"en";if(L!=="en"&&L!=="he")L="en";
   document.documentElement.lang=L; document.documentElement.dir=(L==="he")?"rtl":"ltr";
@@ -1046,6 +1306,68 @@ PAGE = """<!DOCTYPE html>
   .demo-chip button{ font:inherit; font-size:var(--fs-sm); background:var(--chip-bg); border:1px solid var(--chip-line);
                      color:var(--ink-2); border-radius:var(--r-pill); padding:3px 11px; cursor:pointer; }
   .demo-chip[hidden]{ display:none; }
+
+  /* ---- Cursor Usage widget (header chip + dropdown panel) ---- */
+  .usagewrap{ position:relative; display:inline-flex; }
+  .usagechip{ font:inherit; display:inline-flex; align-items:center; gap:7px; cursor:pointer;
+              font-size:var(--fs-sm); color:var(--ink-2); font-weight:600;
+              background:var(--surface-hi); border:1px solid var(--line); border-radius:var(--r-pill);
+              padding:4px 11px; transition:background .15s,border-color .15s; white-space:nowrap; }
+  .usagechip:hover{ background:var(--surface-3); border-color:var(--line-strong,var(--line)); }
+  .usagechip[hidden]{ display:none; }
+  .usagechip .ic{ width:15px; height:15px; opacity:.85; flex:none; }
+  .usagechip .uc-req{ font-family:var(--mono); }
+  .usagechip .uc-bar{ width:44px; height:6px; border-radius:var(--r-pill); background:var(--surface-3);
+                      overflow:hidden; flex:none; }
+  .usagechip .uc-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .usagechip.warn .uc-bar i{ background:var(--idle); } .usagechip.over .uc-bar i{ background:var(--abort); }
+  .usagechip .uc-od{ font-family:var(--mono); color:var(--ink-dim); }
+  .usagechip.needsauth{ color:var(--accent); border-color:rgba(107,124,255,.45); background:rgba(107,124,255,.12); }
+  .usagechip.err{ color:var(--idle); }
+
+  .usagepanel{ position:absolute; inset-inline-end:0; top:calc(100% + 8px); z-index:70; width:min(340px,86vw);
+               background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
+               box-shadow:0 12px 34px rgba(0,0,0,.28); padding:14px 15px; }
+  .usagepanel[hidden]{ display:none; }
+  .up-h{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+  .up-h .up-plan{ font-size:var(--fs-xs); font-weight:700; letter-spacing:.4px; text-transform:uppercase;
+                  padding:2px 8px; border-radius:var(--r-pill); background:var(--accent-soft,rgba(107,124,255,.14)); color:var(--accent); }
+  .up-refresh{ font:inherit; background:none; border:1px solid var(--line); color:var(--ink-dim); cursor:pointer;
+               border-radius:var(--r-pill); width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; }
+  .up-refresh:hover{ color:var(--ink); border-color:var(--ink-dim); }
+  .up-refresh .ic{ width:14px; height:14px; }
+  .up-sec{ margin:10px 0; }
+  .up-lbl{ font-size:var(--fs-xs); color:var(--ink-dim); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+  .up-val{ font-size:var(--fs-md); color:var(--ink); font-weight:650; }
+  .up-val small{ font-weight:500; color:var(--ink-dim); }
+  .up-bar{ height:8px; border-radius:var(--r-pill); background:var(--surface-3); overflow:hidden; margin:6px 0 4px; }
+  .up-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .up-bar.warn i{ background:var(--idle); } .up-bar.over i{ background:var(--abort); }
+  .up-meta{ font-size:var(--fs-sm); color:var(--ink-dim); }
+  .up-burn{ font-size:var(--fs-sm); color:var(--ink-dim); margin-top:6px; }
+  .up-burn.over{ color:var(--abort); }
+  .up-models{ margin-top:10px; border-top:1px solid var(--line-soft); padding-top:8px; }
+  .up-models table{ width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
+  .up-models th{ text-align:start; color:var(--ink-dim); font-weight:600; padding:2px 4px; }
+  .up-models td{ padding:2px 4px; color:var(--ink-2); font-family:var(--mono); }
+  .up-models td.m{ font-family:inherit; overflow:hidden; text-overflow:ellipsis; max-width:150px; white-space:nowrap; }
+  .up-foot{ margin-top:10px; font-size:var(--fs-xs); color:var(--ink-dimmer,var(--ink-dim)); }
+  .up-note{ font-size:var(--fs-sm); color:var(--ink-dim); }
+  html[dir="rtl"] .usagepanel{ inset-inline-end:auto; inset-inline-start:0; }
+
+  /* Persistent usage footer, below the agents list. Mirrors the chip numbers but
+     with progress bars that carry a full-width 100% track (like the modal bars). */
+  .usagefooter{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 22px;
+                margin:6px 14px 20px; padding:11px 15px;
+                background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); }
+  .usagefooter[hidden]{ display:none; }
+  .uf-item{ display:flex; align-items:center; gap:9px; flex:1 1 220px; min-width:200px; }
+  .uf-lbl{ font-size:var(--fs-xs); color:var(--ink-dim); text-transform:uppercase; letter-spacing:.4px; white-space:nowrap; }
+  .uf-num{ font-family:var(--mono); font-size:var(--fs-sm); color:var(--ink); font-weight:650; white-space:nowrap; }
+  .uf-bar{ flex:1 1 auto; height:8px; min-width:60px; border-radius:var(--r-pill);
+           background:var(--surface-3); overflow:hidden; }
+  .uf-bar i{ display:block; height:100%; background:var(--ok); border-radius:inherit; }
+  .uf-bar.warn i{ background:var(--idle); } .uf-bar.over i{ background:var(--abort); }
   /* Embedded (Cursor webview): no demo data source, so hide its affordances. */
   html.embedded .btn-demo, html.embedded #demoChip{ display:none !important; }
 
@@ -1278,6 +1600,13 @@ PAGE = """<!DOCTYPE html>
     .rh .rt{ flex:1 1 auto; }                  /* the room title takes the leftover space... */
     .rh .spacer{ display:none; }               /* ...rather than an expanding spacer, so it isn't truncated */
     .rc{ flex:none; }                          /* keep the status counts intact at the end */
+    /* halve the persona avatar on phones -- it ate too much row width. Ring,
+       emoji and lead badge scale with it so the disc stays crisp. */
+    .ws{ gap:8px; }
+    .avatar{ width:27px; height:27px; font-size:14px; }
+    .avatar::before, .ws.running .avatar::after{ inset:-2px; border-width:1.5px; }
+    .ws.is-session .avatar .lead{ width:9px; height:9px; bottom:-1px; inset-inline-end:-1px; border-width:1.5px; }
+    .ws.is-session .avatar .lead .ic{ width:6px; height:6px; }
   }
   /* Very narrow: drop the count-chip labels (keep icon + number); the live flag stays. */
   @media (max-width:360px){
@@ -1297,17 +1626,36 @@ PAGE = """<!DOCTYPE html>
     /* trim the box's horizontal padding everywhere inside the room */
     .rh{ padding:13px 6px; gap:6px; }
     .floor{ padding:0; }
-    .ws{ padding:9px 8px; }
     #app{ padding:10px 6px 40px; gap:10px; }                  /* widen the content: trim the app's side gutters */
+    /* Very narrow only: stack the desk into two rows so the title gets the full
+       width. Row 1 is the title (+ timer at the end); row 2 drops the now-smaller
+       avatar inline with the activity text and the status badge ("done" etc.).
+       display:contents flattens the .ws-main/.ws-meta wrappers so .name/.act/
+       .timer/.badge become direct grid items we can place. */
+    .ws{ display:grid; align-items:center; column-gap:8px; row-gap:1px; padding:9px 8px;
+         grid-template-columns:auto 1fr auto;
+         grid-template-areas:"name name timer" "avatar act badge"; }
+    .ws-main, .ws-meta{ display:contents; }
+    .name{ grid-area:name; }
+    .timer{ grid-area:timer; }
+    .act{ grid-area:act; }
+    .badge{ grid-area:badge; }
+    .avatar{ grid-area:avatar; width:18px; height:18px; font-size:10px; }
+    .ws.is-session .avatar .lead{ width:8px; height:8px; bottom:-1px; inset-inline-end:-1px; border-width:1.5px; }
+    .ws.is-session .avatar .lead .ic{ width:5px; height:5px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1 id="h1">Cursor Theater</h1>
+  <h1 id="h1">Cursor</h1>
   <div class="counts" id="counts"></div>
   <span id="livestat" class="livestat boot"><i class="livedot" aria-hidden="true"></i><span id="liveago"></span></span>
   <span id="demoChip" class="demo-chip" hidden>▶ <span id="demoChipLbl">Demo</span> <button id="exitDemoBtn" type="button">Exit</button></span>
+  <div class="usagewrap">
+    <button id="usageChip" class="usagechip" type="button" hidden aria-expanded="false" aria-controls="usagePanel"></button>
+    <div id="usagePanel" class="usagepanel" role="region" hidden></div>
+  </div>
   <div class="spacer"></div>
   <button id="hToggle" class="iconbtn htoggle" type="button" aria-expanded="false" aria-controls="htools" aria-label="Tools"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
   <div class="tools" id="htools">
@@ -1320,6 +1668,7 @@ PAGE = """<!DOCTYPE html>
 </header>
 <div id="reconnect" class="reconnect" role="status" hidden></div>
 <div id="app"><div class="boot" data-boot="1"></div></div>
+<div id="usageFooter" class="usagefooter" hidden></div>
 <div id="hidden" class="hiddenrooms" hidden></div>
 <div id="legend" class="legend" hidden></div>
 <div id="diag" class="diag" hidden></div>
@@ -1386,7 +1735,7 @@ const PERSONAS_HE=["הבלש","הסופר","השליח","החוקר","הספרן
 const TOOLS_EN={WebSearch:"🔍 Searching",WebFetch:"🌐 Reading page",Read:"📖 Reading",Edit:"✏️ Editing",MultiEdit:"✏️ Editing",Write:"✏️ Writing",NotebookEdit:"✏️ Notebook",Bash:"⚙️ Command",PowerShell:"⚙️ Command",BashOutput:"⚙️ Output",KillShell:"⚙️ Command",SlashCommand:"⌨️ Slash command",Grep:"🔎 Searching code",Glob:"🔎 Files",Task:"👥 Subagent",Agent:"👥 Subagent",TodoWrite:"📝 Todos",Skill:"🧩 Skill",ExitPlanMode:"📋 Plan",StructuredOutput:"🧾 Summarizing"};
 const TOOLS_HE={WebSearch:"🔍 מחפש",WebFetch:"🌐 קורא דף",Read:"📖 קורא",Edit:"✏️ עורך",MultiEdit:"✏️ עורך",Write:"✏️ כותב",NotebookEdit:"✏️ מחברת",Bash:"⚙️ פקודה",PowerShell:"⚙️ פקודה",BashOutput:"⚙️ פלט",KillShell:"⚙️ פקודה",SlashCommand:"⌨️ פקודת סלאש",Grep:"🔎 מחפש קוד",Glob:"🔎 קבצים",Task:"👥 סוכן",Agent:"👥 סוכן",TodoWrite:"📝 משימות",Skill:"🧩 מיומנות",ExitPlanMode:"📋 תכנון",StructuredOutput:"🧾 מסכם"};
 const I18N={
-  en:{ appTitle:"Cursor Theater", docTitle:"Cursor Theater", showDone:"Show done/stopped", toggleFinished:"Show/hide finished in this conversation", toggleStopped:"Show/hide stopped in this conversation", switchTo:"עברית",
+  en:{ appTitle:"Cursor", docTitle:"Cursor", showDone:"Show done/stopped", toggleFinished:"Show/hide finished in this conversation", toggleStopped:"Show/hide stopped in this conversation", switchTo:"עברית",
        emptyOffice:"The office is empty",
        emptySub:"Start an agent conversation in Cursor — or see what a busy office looks like:",
        emptySubEmbedded:"Start an agent conversation in Cursor — it'll appear here as it works.",
@@ -1412,8 +1761,20 @@ const I18N={
        taskUnavailable:"working — details unavailable",
        actDone:"✅ Done", actStale:"💤 Idle", actAborted:"⏹ Stopped", actThinking:"🤔 Thinking", actMcp:"🔌 MCP tool",
        legAborted:"stopped",
+       usageTitle:"Cursor usage", usageConnect:"Connect usage", usageUnavailable:"Usage n/a",
+       usageSignin:"Sign in to Cursor to see your usage here.",
+       usageIncluded:"Included requests", usageOnDemand:"On-demand spend",
+       usageRemaining:function(n){ return n+" left"; },
+       usageResets:function(d,days){ return "Resets "+d+" · "+days+"d left"; },
+       usageBurn:function(perDay,proj){ return perDay+"/day → ~"+proj+" by reset"; },
+       usageOverProj:"on track to exceed the included limit",
+       usageModels:"By model · this cycle", usageRefresh:"Refresh now",
+       usageUpdated:function(s){ return "updated "+(s<60?(s+"s ago"):(Math.floor(s/60)+"m ago")); },
+       usageCap:function(v){ return "per-user cap "+v; },
+       usageColModel:"model", usageColCost:"cost", usageColReq:"req",
+       usageReqLabel:"Requests", usageSpendLabel:"Spend",
        personas:PERSONAS_EN, tools:TOOLS_EN },
-  he:{ appTitle:"משרד הסוכנים", docTitle:"משרד הסוכנים", showDone:"הצג שהושלמו/נעצרו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", toggleStopped:"הצג/הסתר שנעצרו בשיחה זו", switchTo:"English",
+  he:{ appTitle:"Cursor", docTitle:"Cursor", showDone:"הצג שהושלמו/נעצרו", toggleFinished:"הצג/הסתר שהושלמו בשיחה זו", toggleStopped:"הצג/הסתר שנעצרו בשיחה זו", switchTo:"English",
        emptyOffice:"המשרד ריק",
        emptySub:"הפעילו שיחת סוכן ב-Cursor - או הציצו איך נראה משרד עמוס:",
        emptySubEmbedded:"הפעילו שיחת סוכן ב-Cursor - היא תופיע כאן בזמן העבודה.",
@@ -1439,6 +1800,18 @@ const I18N={
        taskUnavailable:"עובד — פרטים לא זמינים",
        actDone:"✅ סיים", actStale:"💤 ממתין", actAborted:"⏹ נעצר", actThinking:"🤔 חושב", actMcp:"🔌 כלי MCP",
        legAborted:"נעצר",
+       usageTitle:"שימוש ב-Cursor", usageConnect:"חיבור שימוש", usageUnavailable:"שימוש לא זמין",
+       usageSignin:"התחברו ל-Cursor כדי לראות כאן את השימוש שלכם.",
+       usageIncluded:"בקשות כלולות", usageOnDemand:"הוצאה לפי דרישה",
+       usageRemaining:function(n){ return "נותרו "+n; },
+       usageResets:function(d,days){ return "מתאפס "+d+" · עוד "+days+" ימים"; },
+       usageBurn:function(perDay,proj){ return perDay+"/יום ← ~"+proj+" עד האיפוס"; },
+       usageOverProj:"בקצב הנוכחי הכמות הכלולה תיחרג",
+       usageModels:"לפי מודל · מחזור נוכחי", usageRefresh:"רענון עכשיו",
+       usageUpdated:function(s){ return "עודכן "+(s<60?("לפני "+s+" שנ׳"):("לפני "+Math.floor(s/60)+" דק׳")); },
+       usageCap:function(v){ return "תקרה למשתמש "+v; },
+       usageColModel:"מודל", usageColCost:"עלות", usageColReq:"בקשות",
+       usageReqLabel:"בקשות", usageSpendLabel:"הוצאה",
        personas:PERSONAS_HE, tools:TOOLS_HE }
 };
 let lang=(function(){ try{ var Q=(location.search.match(/[?&]lang=(he|en)\\b/)||[])[1]; if(Q) return Q;
@@ -1472,6 +1845,7 @@ function applyLang(){ const el=document.documentElement; el.lang=lang; el.dir=(l
   document.title=t("docTitle");
   const boot=document.querySelector('#app .boot[data-boot]'); if(boot) boot.innerHTML=skeletonHTML();
   renderLegend();
+  if(typeof renderUsage==="function") renderUsage();
   if(lastLiveMs) tickLive();
   // The drawer is the one surface render() may not refresh (an open 'done' agent
   // can be filtered out of the floor), so re-translate it directly from cached data.
@@ -1493,7 +1867,9 @@ const ICON={
   sun:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6M18.4 18.4l-1.6-1.6M7.2 7.2 5.6 5.6"/></svg>',
   moon:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.8 6.8 0 0 0 9.8 9.8z"/></svg>',
   bell:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/></svg>',
-  bellOff:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/><path d="M3.2 2.5 21.5 20.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+  bellOff:'<svg class="ic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.6L4.3 15a1 1 0 0 0 .9 1.5h13.6a1 1 0 0 0 .9-1.5L18 11.6V8a6 6 0 0 0-6-6zm0 20a2.6 2.6 0 0 0 2.5-2h-5A2.6 2.6 0 0 0 12 22z"/><path d="M3.2 2.5 21.5 20.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  gauge:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 19l4-5"/></svg>',
+  refresh:'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.5 4"/><path d="M20 4v5h-5"/></svg>'
 };
 let booted=false;            // becomes true after the first successful scan
 function skeletonHTML(){ const rows=n=>Array(n).fill('<div class="sk-row shimmer"></div>').join("");
@@ -1581,7 +1957,10 @@ function updateWS(e,a){ e.data=a;
   const fam=toolFamily(a.tool); e.root.dataset.fam=fam;
   e.root.style.setProperty("--row-fam", FAM_COLOR[fam]||"var(--ok)");
   e.refs.head.textContent=a.emoji;
-  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.title=nm; e.refs.name.dir="auto";
+  const nm=deskName(a); e.refs.name.textContent=nm; e.refs.name.dir="auto";
+  // Hover tooltip on the card title = the conversation's full working-directory path
+  // (falls back to the title when the path is unknown).
+  const pathTip=((a.path||a.cwd||a.project||"")+"").trim(); e.refs.name.title=pathTip||nm;
   const actLbl=activityLabel(a); e.refs.act.textContent=actLbl; e.refs.act.parentElement.title=actLbl;
   e.refs.badge.textContent=badgeText(a);
   e.root.setAttribute("aria-label", nm+" — "+actLbl);
@@ -1861,6 +2240,88 @@ let __rtz; window.addEventListener("resize",function(){ clearTimeout(__rtz); __r
 let polling=false, failStreak=0;
 function setConnected(ok){ connected=ok; const el=document.getElementById("reconnect");
   el.hidden=ok; if(!ok) el.textContent=t("reconnecting"); tickLive(); }
+
+// ---- Cursor Usage widget: header chip + expandable details panel ----
+// The extension host does all auth/network; the webview only renders the parsed
+// numbers it receives via {type:"usage"} (no token ever reaches this code).
+let usageData=null, usageOpen=false;
+function usageMoney(n){ if(n==null||isNaN(n)) return "$0"; const r=Math.round(n*100)/100;
+  return "$"+(Number.isInteger(r)?String(r):r.toFixed(2)); }
+function usageDate(ms){ if(!ms) return ""; try{ return new Date(ms).toLocaleDateString(lang==="he"?"he-IL":undefined,{month:"short",day:"numeric"}); }catch(e){ return ""; } }
+function usageBarClass(pct){ return pct>=100?"over":(pct>=80?"warn":""); }
+function usageFoot(u){ const s=Math.max(0,Math.round((Date.now()-(u.fetchedAtMs||Date.now()))/1000));
+  return '<div class="up-foot">'+esc(u.email||"")+(u.email?" · ":"")+esc(I18N[lang].usageUpdated(s))+'</div>'; }
+function renderUsagePanel(){ const panel=document.getElementById("usagePanel"); if(!panel) return;
+  const u=usageData; if(!u){ panel.innerHTML=""; return; } const L=I18N[lang];
+  const head='<div class="up-h"><span class="up-plan">'+esc(u.plan||"cursor")+'</span>'
+    +'<button class="up-refresh" id="usageRefreshBtn" type="button" title="'+esc(t("usageRefresh"))+'" aria-label="'+esc(t("usageRefresh"))+'">'+ICON.refresh+'</button></div>';
+  if(u.state==="needsAuth"){ panel.innerHTML=head+'<div class="up-note">'+esc(t("usageSignin"))+'</div>'; return; }
+  if(u.state==="error"){ panel.innerHTML=head+'<div class="up-note">'+esc(t("usageUnavailable"))+(u.error?(" · "+esc(u.error)):"")+'</div>'+usageFoot(u); return; }
+  const pct=Math.max(0,Math.min(100,u.pct||0));
+  const burn=(u.requestsPerDay!=null&&u.projectedRequests!=null)
+    ? '<div class="up-burn'+(u.projectedToExceed?" over":"")+'">'+esc(L.usageBurn(u.requestsPerDay,u.projectedRequests))+(u.projectedToExceed?(" · "+esc(t("usageOverProj"))):"")+'</div>' : "";
+  const inc='<div class="up-sec"><div class="up-lbl">'+esc(t("usageIncluded"))+'</div>'
+    +'<div class="up-val">'+esc(u.used)+' / '+esc(u.limit)+' <small>('+esc(u.pct)+'%)</small></div>'
+    +'<div class="up-bar '+usageBarClass(u.pct||0)+'"><i style="width:'+pct+'%"></i></div>'
+    +'<div class="up-meta">'+esc(L.usageRemaining(u.remaining))
+    +(u.cycleEndMs?(" · "+esc(L.usageResets(usageDate(u.cycleEndMs), u.daysLeft==null?0:u.daysLeft))):"")+'</div>'+burn+'</div>';
+  const od='<div class="up-sec"><div class="up-lbl">'+esc(t("usageOnDemand"))+'</div>'
+    +'<div class="up-val">'+esc(usageMoney(u.onDemandUsed))+' <small>/ '+esc(usageMoney(u.onDemandLimit))+'</small></div>'
+    +(u.hardLimitPerUser!=null?('<div class="up-meta">'+esc(L.usageCap(usageMoney(u.hardLimitPerUser)))+'</div>'):"")+'</div>';
+  let models="";
+  if(u.perModel&&u.perModel.length){
+    const rows=u.perModel.slice().sort(function(a,b){ return (b.costCents||0)-(a.costCents||0); }).map(function(m){
+      return '<tr><td class="m" title="'+esc(m.model)+'">'+esc(m.model)+'</td><td>'+esc(usageMoney((m.costCents||0)/100))+'</td><td>'+esc(m.requests||0)+'</td></tr>'; }).join("");
+    models='<div class="up-models"><div class="up-lbl">'+esc(t("usageModels"))+'</div>'
+      +'<table><thead><tr><th>'+esc(t("usageColModel"))+'</th><th>'+esc(t("usageColCost"))+'</th><th>'+esc(t("usageColReq"))+'</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }
+  panel.innerHTML=head+inc+od+models+usageFoot(u);
+}
+function renderUsageFooter(){ const f=document.getElementById("usageFooter"); if(!f) return;
+  const u=usageData;
+  if(!u||u.state!=="ok"){ f.hidden=true; f.innerHTML=""; return; }
+  const reqPct=Math.max(0,Math.min(100,u.pct||0));
+  const odLimit=u.onDemandLimit||0, odPct=odLimit>0?Math.max(0,Math.min(100,(u.onDemandUsed/odLimit)*100)):0;
+  f.hidden=false;
+  f.innerHTML=
+    '<div class="uf-item"><span class="uf-lbl">'+esc(t("usageReqLabel"))+'</span>'
+      +'<span class="uf-num">'+esc(u.used)+'/'+esc(u.limit)+'</span>'
+      +'<span class="uf-bar '+usageBarClass(u.pct||0)+'"><i style="width:'+reqPct+'%"></i></span></div>'
+    +'<div class="uf-item"><span class="uf-lbl">'+esc(t("usageSpendLabel"))+'</span>'
+      +'<span class="uf-num">'+esc(usageMoney(u.onDemandUsed))+'/'+esc(usageMoney(u.onDemandLimit))+'</span>'
+      +'<span class="uf-bar '+usageBarClass(odPct)+'"><i style="width:'+odPct+'%"></i></span></div>';
+}
+function renderUsage(d){ if(d) usageData=d;
+  const chip=document.getElementById("usageChip"), panel=document.getElementById("usagePanel");
+  if(!chip||!panel) return; const u=usageData;
+  if(!u){ chip.hidden=true; panel.hidden=true; renderUsageFooter(); return; }
+  chip.hidden=false; chip.title=t("usageTitle");
+  if(u.state==="needsAuth"){ chip.className="usagechip needsauth"; chip.innerHTML=ICON.gauge+'<span>'+esc(t("usageConnect"))+'</span>'; }
+  else if(u.state==="error"){ chip.className="usagechip err"; chip.innerHTML=ICON.gauge+'<span>'+esc(t("usageUnavailable"))+'</span>'; }
+  else { chip.className="usagechip";
+    chip.innerHTML=ICON.gauge+'<span class="uc-req">'+esc(u.used)+'/'+esc(u.limit)+'</span>'
+      +'<span class="uc-od">'+esc(usageMoney(u.onDemandUsed))+'/'+esc(usageMoney(u.onDemandLimit))+'</span>'; }
+  renderUsagePanel(); renderUsageFooter(); panel.hidden=!usageOpen; chip.setAttribute("aria-expanded", usageOpen?"true":"false");
+}
+function toggleUsage(){ usageOpen=!usageOpen; renderUsage(); }
+// Standalone (Python server) usage: the browser can't reach cursor.com (CSP +
+// no cookie), so the server reuses the local token and exposes /api/usage. The
+// embedded webview instead receives usage via postMessage from the extension host.
+let usageHttpTimer=null;
+function fetchUsageHttp(force){ if(__CT_VS||demoMode) return;
+  fetch(API_BASE+"/api/usage"+(force?"?force=1":""),{cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderUsage(d); })
+    .catch(function(e){ renderUsage({state:"error",error:String(e),fetchedAtMs:Date.now()}); }); }
+function requestUsageRefresh(force){ if(__CT_VS){ try{ __CT_VS.postMessage({type:"refreshUsage"}); }catch(_){} } else { fetchUsageHttp(force); } }
+(function wireUsage(){ const chip=document.getElementById("usageChip"), panel=document.getElementById("usagePanel");
+  if(!chip||!panel) return;
+  chip.addEventListener("click",toggleUsage);
+  panel.addEventListener("click",function(e){ const r=e.target.closest&&e.target.closest("#usageRefreshBtn");
+    if(r) requestUsageRefresh(true); });
+  document.addEventListener("click",function(e){ if(!usageOpen) return;
+    const w=e.target.closest&&e.target.closest(".usagewrap"); if(!w){ usageOpen=false; renderUsage(); } });
+})();
 // Data source adapter. Two front ends share this exact UI:
 //  * Cursor/VS Code extension webview -> the extension host reads the journals
 //    and PUSHES payloads via postMessage (no HTTP server, no port).
@@ -1885,7 +2346,8 @@ async function poll(){ if(__CT_VS) return;           // webview is push-driven; 
 applyLang();
 if(__CT_VS){
   window.addEventListener("message",function(ev){ const d=ev.data||{};
-    if(d&&d.type==="agents"){ booted=true; lastLiveMs=Date.now(); render(d.payload); failStreak=0; setConnected(true); } });
+    if(d&&d.type==="agents"){ booted=true; lastLiveMs=Date.now(); render(d.payload); failStreak=0; setConnected(true); }
+    else if(d&&d.type==="usage"){ renderUsage(d.data); } });
   var requestScan=function(){ try{ __CT_VS.postMessage({type:"ready"}); }catch(e){} };
   requestScan();                            // ask the host for the first scan
   // Safety nets so a docked side view never stays blank: re-request if the first
@@ -1894,7 +2356,9 @@ if(__CT_VS){
   setTimeout(function(){ if(!booted) requestScan(); }, 1500);
   document.addEventListener("visibilitychange",function(){ if(!document.hidden) requestScan(); });
   window.addEventListener("focus",requestScan);
-} else { poll(); setInterval(poll,POLL_MS); }
+} else { poll(); setInterval(poll,POLL_MS);
+  // Standalone: pull Cursor usage from the local server (skipped in demo mode).
+  if(!demoMode){ fetchUsageHttp(); usageHttpTimer=setInterval(function(){ fetchUsageHttp(); },60000); } }
 function unlock(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){} }
 window.addEventListener("click",unlock,{once:true}); window.addEventListener("keydown",unlock,{once:true});
 </script>
@@ -2002,6 +2466,18 @@ class Handler(BaseHTTPRequestHandler):
                 # process or a pasted screenshot, and str(e) may embed the home path.
                 print("!! scan error:", repr(e))
                 body = json.dumps({"error": "scan failed"})
+            self._send(200, body, "application/json; charset=utf-8")
+        elif path == "/api/usage":
+            # Live Cursor usage, reusing the local session token. Cached server-side
+            # (TTL) so page polls never hammer cursor.com; ?force=1 bypasses the cache.
+            try:
+                _q = parse_qs(urlsplit(self.path).query)
+                force = _q.get("force", [""])[0] == "1"
+                body = json.dumps(usage_payload(force=force), ensure_ascii=False)
+            except Exception as e:
+                print("!! usage error:", repr(e))
+                body = json.dumps({"state": "error", "error": "usage failed",
+                                   "fetchedAtMs": int(time.time() * 1000)})
             self._send(200, body, "application/json; charset=utf-8")
         elif path == "/" or path.startswith("/index"):
             self._send(200, page_html(), "text/html; charset=utf-8")

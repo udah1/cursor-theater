@@ -14,10 +14,12 @@ import * as os from "os";
 import * as https from "https";
 import { scan, PROJECTS_DIR } from "./scan";
 import { cursorStateDb } from "./composer";
-import { Payload } from "./types";
+import { fetchUsage } from "./usage";
+import { Payload, UsageData } from "./types";
 
 const SCAN_INTERVAL_MS = 6000; // background cadence (the file watcher drives faster updates when a view is open)
 const RELEASES_REPO = "udah1/cursor-theater"; // where Check-for-updates looks; releases are tagged cursor-vX.Y.Z
+const USAGE_MIN_INTERVAL_MS = 60000; // never hit the undocumented cursor.com endpoints more than once/min
 
 let extensionPath = "";
 let extensionVersion = "0.0.0";
@@ -36,6 +38,15 @@ let queued = false;
 let updateAvailable: LatestRelease | undefined;
 let lastCounts = { running: 0, idle: 0, aborted: 0, done: 0 };
 let updateTimer: NodeJS.Timeout | undefined;
+
+// Cursor Usage state. We refresh when the agent status signature changes (throttled
+// to once/USAGE_MIN_INTERVAL_MS) and on manual request; the last result is cached so
+// a freshly-opened webview paints immediately.
+let lastUsage: UsageData | undefined;
+let lastUsageFetchMs = 0;
+let usageThrottleTimer: NodeJS.Timeout | undefined;
+let usageFetching = false;
+let lastStatusSig: string | undefined;
 
 function nonce(): string {
   let s = "";
@@ -148,6 +159,7 @@ async function runScan() {
   try {
     const payload = await scan();
     updateStatusItem(payload);
+    maybeTriggerUsageOnStatusChange(payload);
     for (const w of liveWebviews()) {
       w.postMessage({ type: "agents", payload });
     }
@@ -170,6 +182,63 @@ function scheduleScan() {
     debounce = undefined;
     void runScan();
   }, 300);
+}
+
+// ---- Cursor Usage (cursor.com dashboard numbers) --------------------------
+
+function usageEnabled(): boolean {
+  return vscode.workspace.getConfiguration("cursorTheater").get<boolean>("showUsage", true);
+}
+
+// Refresh usage when the set of agent statuses actually changes (a new run starts,
+// one finishes, etc.), not on every scan tick. The throttle below caps the rate.
+function maybeTriggerUsageOnStatusChange(payload: Payload) {
+  if (!usageEnabled()) {
+    return;
+  }
+  const sig = payload.agents
+    .map((a) => a.id + ":" + a.status)
+    .sort()
+    .join("|");
+  if (sig !== lastStatusSig) {
+    lastStatusSig = sig;
+    scheduleUsageRefresh();
+  }
+}
+
+async function doUsageFetch() {
+  if (usageFetching) {
+    return;
+  }
+  usageFetching = true;
+  lastUsageFetchMs = Date.now();
+  try {
+    lastUsage = await fetchUsage();
+  } catch (e) {
+    lastUsage = { state: "error", error: (e as Error).message, fetchedAtMs: Date.now() };
+  } finally {
+    usageFetching = false;
+  }
+  for (const w of liveWebviews()) {
+    w.postMessage({ type: "usage", data: lastUsage });
+  }
+}
+
+// Throttled trigger: fetch immediately if we're outside the cooldown, otherwise
+// schedule a single trailing fetch at the end of it (coalescing bursts).
+function scheduleUsageRefresh() {
+  if (!usageEnabled()) {
+    return;
+  }
+  const since = Date.now() - lastUsageFetchMs;
+  if (since >= USAGE_MIN_INTERVAL_MS) {
+    void doUsageFetch();
+  } else if (!usageThrottleTimer) {
+    usageThrottleTimer = setTimeout(() => {
+      usageThrottleTimer = undefined;
+      void doUsageFetch();
+    }, USAGE_MIN_INTERVAL_MS - since);
+  }
 }
 
 function startWatching() {
@@ -222,6 +291,15 @@ function wireWebview(webview: vscode.Webview, pageHtml: string) {
   webview.onDidReceiveMessage((msg) => {
     if (msg && msg.type === "ready") {
       void runScan();
+      // Paint the last-known usage instantly, then refresh (throttled).
+      if (usageEnabled()) {
+        if (lastUsage) {
+          webview.postMessage({ type: "usage", data: lastUsage });
+        }
+        scheduleUsageRefresh();
+      }
+    } else if (msg && msg.type === "refreshUsage") {
+      scheduleUsageRefresh();
     }
   });
   // Safety net for the first paint: the webview also posts "ready", but if that
@@ -527,6 +605,10 @@ export function deactivate() {
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = undefined;
+  }
+  if (usageThrottleTimer) {
+    clearTimeout(usageThrottleTimer);
+    usageThrottleTimer = undefined;
   }
   if (panel) {
     panel.dispose();

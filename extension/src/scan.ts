@@ -11,6 +11,13 @@ import { composerMetaBatch } from "./composer";
 export const MAX_AGE_MIN = 180; // only show conversations whose file changed in the last N minutes
 const RUNNING_STALE_SEC = 360; // 6 min of total silence before a chat reads as idle
 const ABORTED_IDLE_SEC = 90; // a manually-stopped chat reads as idle once its checkpoint freezes this long
+// Cursor exposes no "generating right now" flag, so "done" is detected from the
+// transcript's last line being an assistant message with no trailing tool call.
+// Mid-turn (between tool calls) the last line transiently looks finished, which
+// flapped an actively-working chat running<->done every scan (replaying the finish
+// confetti/chime). Debounce: only trust "done" once the conversation has been QUIET
+// (no transcript / lastUpdatedAt / checkpoint write) for this long.
+const DONE_DEBOUNCE_SEC = 10;
 
 const PROJECTS_DIR = path.join(os.homedir(), ".cursor", "projects");
 
@@ -408,6 +415,27 @@ function projectLabel(p: string): string {
   return label;
 }
 
+const pathCache = new Map<string, string>();
+
+// The conversation's real absolute working directory (for the card-title tooltip),
+// reconstructed from the encoded project folder. Falls back to "" when it can't be
+// resolved (e.g. the project moved). Cached by encoded folder name.
+function projectPath(transcriptPath: string): string {
+  const parts = transcriptPath.replace(/\\/g, "/").split("/");
+  const idx = parts.indexOf("agent-transcripts");
+  if (idx <= 0) {
+    return "";
+  }
+  const enc = parts[idx - 1];
+  const cached = pathCache.get(enc);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const real = decodeProjectDir(enc) || "";
+  pathCache.set(enc, real);
+  return real;
+}
+
 async function sessionSummary(sessionFile: string): Promise<{ topic: string; cwd: string }> {
   const mtime = statMtimeMs(sessionFile);
   if (mtime === null) {
@@ -549,12 +577,17 @@ async function scanSessions(nowSec: number): Promise<Agent[]> {
     const checkpointMs = meta.checkpoint_ms || 0;
     const abortedIdle =
       liveStatus === "aborted" && !!checkpointMs && nowSec - checkpointMs / 1000 > ABORTED_IDLE_SEC;
+    // Freshest "is it still working right now?" signal. The checkpoint advances every
+    // few seconds mid-turn even when the transcript mtime / lastUpdatedAt lag, so a
+    // chat touched within DONE_DEBOUNCE_SEC is still generating and must NOT read done.
+    const freshestMs = Math.max(lastActivityMs, checkpointMs);
+    const recentlyActive = !!freshestMs && nowSec - freshestMs / 1000 < DONE_DEBOUNCE_SEC;
     let status: Agent["status"];
-    if (isDone && !isGenerating) {
+    if (isDone && !isGenerating && !recentlyActive) {
       status = "done";
     } else if (abortedIdle) {
       status = "aborted"; // user manually stopped it (distinct from naturally idle)
-    } else if (isGenerating || nowSec - lastActivityMs / 1000 <= RUNNING_STALE_SEC) {
+    } else if (isGenerating || recentlyActive || nowSec - lastActivityMs / 1000 <= RUNNING_STALE_SEC) {
       status = "running";
     } else {
       status = "stale";
@@ -578,6 +611,7 @@ async function scanSessions(nowSec: number): Promise<Agent[]> {
       session_full: uuid,
       cwd,
       project: cwd,
+      path: projectPath(p) || cwd,
       mtime_ms: mtimeMs,
       is_session: true,
     });
@@ -689,6 +723,7 @@ async function scanSubAgents(
         session_full: session,
         cwd: firstEv.raw.cwd || "",
         project,
+        path: (firstEv.raw.cwd as string) || project,
         mtime_ms: Math.floor(st.mtimeMs),
         is_session: false,
       };
@@ -700,9 +735,12 @@ async function scanSubAgents(
       skipped += nSkip;
     }
 
-    // status tracks wall-clock now, so recompute every scan (even on a cache hit)
+    // status tracks wall-clock now, so recompute every scan (even on a cache hit).
+    // Debounce "done" like top-level chats: a subagent whose file was written within
+    // DONE_DEBOUNCE_SEC is mid-turn (its last line only transiently looks finished
+    // between tool calls), so keep it "running" until it goes quiet.
     let status: Agent["status"];
-    if (isDone) {
+    if (isDone && nowSec - adict.mtime_ms / 1000 > DONE_DEBOUNCE_SEC) {
       status = "done";
     } else if (nowSec - adict.mtime_ms / 1000 > RUNNING_STALE_SEC) {
       status = "stale";

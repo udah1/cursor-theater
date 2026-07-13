@@ -2,7 +2,7 @@
   "name": "cursor-theater",
   "displayName": "Cursor Theater",
   "description": "A live, grouped office of your Cursor agent conversations - shown natively in a panel, no server.",
-  "version": "0.1.7",
+  "version": "0.1.11",
   "publisher": "cursor-theater",
   "license": "MIT",
   "engines": {
@@ -61,6 +61,11 @@
           "type": "number",
           "default": 60,
           "description": "How often (in minutes) to check GitHub for a newer release. Set to 0 to disable background update checks."
+        },
+        "cursorTheater.showUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show your live Cursor usage (included requests + on-demand spend) in the theater header. Reads Cursor's own session token locally; the token never leaves your machine except in requests to cursor.com."
         }
       }
     }

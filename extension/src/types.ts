@@ -19,6 +19,7 @@ export interface Agent {
   session_full: string;
   cwd: string;
   project: string;
+  path?: string; // full absolute working directory (card-title tooltip)
   mtime_ms: number;
   is_session: boolean;
 }
@@ -37,4 +38,52 @@ export interface ComposerMeta {
   created_ms?: number | null;
   updated_ms?: number | null;
   checkpoint_ms?: number | null;
+}
+
+// Per-model cost/token breakdown for the current billing cycle (team accounts).
+export interface UsageModelRow {
+  model: string;
+  costCents: number;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+// Live Cursor usage, parsed in the extension host and pushed to the webview.
+// Discriminated on `state`; the "ok" fields are only present when state === "ok".
+// The session cookie is NEVER included here - only derived numbers cross to the UI.
+export interface UsageData {
+  state: "ok" | "needsAuth" | "error";
+  fetchedAtMs: number;
+  error?: string;
+
+  email?: string;
+  plan?: string; // membershipType, e.g. "pro" / "enterprise"
+  isTeam?: boolean;
+
+  // Included-request usage (dashboard legacy-request logic).
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  pct?: number;
+  planPercentUsed?: number | null; // raw usage-based % the dashboard shows, if present
+
+  // On-demand / usage-based spend, in dollars.
+  onDemandUsed?: number;
+  onDemandLimit?: number;
+  onDemandRemaining?: number;
+  hardLimitPerUser?: number | null;
+
+  // Billing cycle + burn rate.
+  cycleStartMs?: number | null;
+  cycleEndMs?: number | null;
+  daysLeft?: number | null;
+  requestsPerDay?: number | null;
+  projectedRequests?: number | null;
+  projectedToExceed?: boolean;
+
+  perModel?: UsageModelRow[];
+  totalCostCents?: number | null;
 }
